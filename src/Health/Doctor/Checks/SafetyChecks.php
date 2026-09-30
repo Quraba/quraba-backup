@@ -7,7 +7,6 @@ namespace Quraba\Backup\Health\Doctor\Checks;
 use Illuminate\Contracts\Config\Repository;
 use Quraba\Backup\Health\CheckResult;
 use Quraba\Backup\Health\Doctor\DoctorCheck;
-use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\PathGuard;
 
 /**
@@ -18,7 +17,6 @@ final readonly class SafetyChecks implements DoctorCheck
 {
     public function __construct(
         private Repository $config,
-        private PackagePaths $paths,
         private string $basePath,
         private string $publicPath,
         private string $storagePath,
@@ -33,12 +31,9 @@ final readonly class SafetyChecks implements DoctorCheck
     {
         return [
             $this->secretIndependence(),
-            $this->archivePassword(),
             $this->passwordFileLocation(),
             $this->managedBinaryLocation(),
-            ...$this->mediaRoots(),
             $this->recoverySecretsAcknowledged(),
-            CheckResult::skip('safety.scheduler', 'Scheduler', 'Scheduled backups are not implemented in this version; no cron entry is needed yet.'),
         ];
     }
 
@@ -61,13 +56,6 @@ final readonly class SafetyChecks implements DoctorCheck
         }
 
         return CheckResult::pass('safety.secret_independence', 'Independent secrets', 'APP_KEY, the archive password and the Restic password are not reused (compared in memory only).');
-    }
-
-    private function archivePassword(): CheckResult
-    {
-        return $this->string($this->config->get('quraba-backup.archive.password')) === null
-            ? CheckResult::warn('safety.archive_password', 'Archive password', 'QURABA_BACKUP_ARCHIVE_PASSWORD is not set. Application archives (arriving in a later phase) will be refused without it.')
-            : CheckResult::pass('safety.archive_password', 'Archive password', 'Configured (value not shown).');
     }
 
     private function passwordFileLocation(): CheckResult
@@ -103,67 +91,6 @@ final readonly class SafetyChecks implements DoctorCheck
         }
 
         return CheckResult::pass('safety.binary_location', 'Managed binary location', 'Outside the public web root.');
-    }
-
-    /**
-     * @return list<CheckResult>
-     */
-    private function mediaRoots(): array
-    {
-        $roots = $this->config->get('restic.media.roots', []);
-
-        if (! is_array($roots) || $roots === []) {
-            return [CheckResult::skip('safety.media_roots', 'Media roots', 'No media roots configured.')];
-        }
-
-        $forbidden = [
-            'the application root' => PathGuard::real($this->basePath) ?? $this->basePath,
-            'the parent of the application' => dirname(PathGuard::real($this->basePath) ?? $this->basePath),
-            'the storage directory' => PathGuard::real($this->storagePath) ?? $this->storagePath,
-            'the public directory' => PathGuard::real($this->publicPath) ?? $this->publicPath,
-        ];
-
-        $packageRoot = PathGuard::real($this->paths->root) ?? $this->paths->root;
-        $problems = [];
-        $warnings = [];
-
-        foreach ($roots as $name => $root) {
-            $path = is_array($root) ? ($root['path'] ?? null) : $root;
-
-            if (! is_string($path) || ! PathGuard::isAbsolute($path)) {
-                $problems[] = sprintf('Media root [%s] must be an absolute path.', (string) $name);
-
-                continue;
-            }
-
-            $real = PathGuard::real($path) ?? $path;
-
-            if ($real === '/' || preg_match('~^[A-Za-z]:/?$~', $real) === 1) {
-                $problems[] = sprintf('Media root [%s] is the filesystem root.', (string) $name);
-            }
-
-            foreach ($forbidden as $description => $forbiddenPath) {
-                if (PathGuard::isWithin($forbiddenPath, $real)) {
-                    $problems[] = sprintf('Media root [%s] contains %s.', (string) $name, $description);
-                }
-            }
-
-            if (PathGuard::isWithin($real, $packageRoot) || PathGuard::isWithin($packageRoot, $real)) {
-                $problems[] = sprintf('Media root [%s] overlaps the package private storage.', (string) $name);
-            }
-
-            if (! is_dir($path)) {
-                $warnings[] = sprintf('Media root [%s] (%s) does not exist yet.', (string) $name, $path);
-            }
-        }
-
-        if ($problems !== []) {
-            return [CheckResult::fail('safety.media_roots', 'Media roots', implode(' ', $problems))];
-        }
-
-        return [$warnings === []
-            ? CheckResult::pass('safety.media_roots', 'Media roots', sprintf('%d media root(s) are narrowly scoped.', count($roots)))
-            : CheckResult::warn('safety.media_roots', 'Media roots', implode(' ', $warnings))];
     }
 
     private function recoverySecretsAcknowledged(): CheckResult

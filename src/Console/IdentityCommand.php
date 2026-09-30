@@ -12,7 +12,7 @@ use Quraba\Backup\Support\PackageVersion;
 
 final class IdentityCommand extends PackageCommand
 {
-    protected $signature = 'backup:identity
+    protected $signature = 'quraba:backup:identity
         {--generate : Print a new application ID for first-time setup (refused when one is configured)}
         {--json : Output machine-readable JSON}';
 

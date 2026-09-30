@@ -31,7 +31,7 @@ return [
     | its whole lifetime. It is never derived from APP_NAME, APP_URL, the
     | hostname, the domain or the directory name. Generate one with:
     |
-    |     php artisan backup:identity --generate
+    |     php artisan quraba:backup:identity --generate
     |
     | `environment` separates production from staging backups. When null the
     | Laravel application environment (APP_ENV) is used.
@@ -45,7 +45,7 @@ return [
     | Set to true once the recovery secrets (B2 key ID + application key,
     | bucket/endpoint, archive password, Restic password, QURABA_BACKUP_APP_ID)
     | are stored outside this server. The package cannot verify this itself;
-    | backup:doctor warns until it is acknowledged.
+    | quraba:backup:doctor warns until it is acknowledged.
     */
     'recovery_secrets_acknowledged' => (bool) env('QURABA_BACKUP_RECOVERY_SECRETS_ACKNOWLEDGED', false),
 
@@ -69,6 +69,8 @@ return [
         // Workspaces older than this, whose owner no longer holds them, are
         // reported as abandoned. Cleanup never deletes an active workspace.
         'abandoned_after_hours' => (int) env('QURABA_BACKUP_WORKSPACE_ABANDONED_AFTER_HOURS', 24),
+        // quraba:backup:doctor warns when less free disk than this remains for workspaces.
+        'min_free_mb' => (int) env('QURABA_BACKUP_WORKSPACE_MIN_FREE_MB', 1024),
     ],
 
     'locking' => [
@@ -92,6 +94,8 @@ return [
         'catalog_connection' => env('QURABA_BACKUP_CATALOG_CONNECTION'),
         'dump_binary' => env('QURABA_BACKUP_DB_DUMP_BINARY'),
         'client_binary' => env('QURABA_BACKUP_DB_CLIENT_BINARY'),
+        // Include stored procedures/functions in the dump (triggers are always included).
+        'dump_routines' => (bool) env('QURABA_BACKUP_DB_DUMP_ROUTINES', true),
         'tool_search_paths' => [
             '/usr/bin',
             '/usr/local/bin',
@@ -122,15 +126,37 @@ return [
     ],
 
     /*
-    | Application archive (database dump + .env). Reserved: archive creation
-    | arrives in a later phase. Encryption is mandatory; a missing password
-    | will refuse the backup rather than produce an unencrypted .env copy.
+    | Application archive: database dump + .env + quraba-backup.json, always
+    | AES-256 encrypted. A missing or blank password refuses the backup before
+    | anything is created; there is no unencrypted fallback. Keep the password
+    | outside this server — nobody can open the archives without it.
     */
     'archive' => [
         'password' => env('QURABA_BACKUP_ARCHIVE_PASSWORD'),
-        'include_env' => true,
-        'encryption' => 'aes256',
-        'extra_files' => [],
+        'include_env' => (bool) env('QURABA_BACKUP_ARCHIVE_INCLUDE_ENV', true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Recovery Point consistency
+    |--------------------------------------------------------------------------
+    |
+    | `provider`: none | laravel_maintenance. Without proven quiescence a
+    | Recovery Point is `best_effort`. Laravel maintenance mode only blocks
+    | HTTP; the capture is recorded as `quiesced` only when you also declare
+    | that no queue workers, scheduled tasks or other CLI writers change data
+    | (`no_background_writers`).
+    |
+    | `require_quiesced`: refuse Recovery Points that cannot be quiesced,
+    | unless `allow_downgrade` explicitly permits recording them as best_effort.
+    |
+    */
+    'consistency' => [
+        'provider' => env('QURABA_BACKUP_QUIESCENCE_PROVIDER', 'none'),
+        'no_background_writers' => (bool) env('QURABA_BACKUP_NO_BACKGROUND_WRITERS', false),
+        'require_quiesced' => (bool) env('QURABA_BACKUP_REQUIRE_QUIESCED', false),
+        'allow_downgrade' => (bool) env('QURABA_BACKUP_ALLOW_CONSISTENCY_DOWNGRADE', false),
+        'maintenance_retry_after' => 60,
     ],
 
     /*
@@ -142,6 +168,7 @@ return [
         'http_probe' => (int) env('QURABA_BACKUP_HTTP_PROBE_TIMEOUT', 20),
         'download' => (int) env('QURABA_BACKUP_DOWNLOAD_TIMEOUT', 600),
         'tool_probe' => (int) env('QURABA_BACKUP_TOOL_PROBE_TIMEOUT', 20),
+        'database_dump' => (int) env('QURABA_BACKUP_DB_DUMP_TIMEOUT', 3600),
     ],
 
     'logging' => [
@@ -149,12 +176,40 @@ return [
         'channel' => env('QURABA_BACKUP_LOG_CHANNEL'),
     ],
 
-    /* Reserved: scheduling arrives with backup orchestration. */
+    /*
+    |--------------------------------------------------------------------------
+    | Scheduling
+    |--------------------------------------------------------------------------
+    |
+    | Registered with Laravel's scheduler; the host needs ONE cron entry:
+    |
+    |     * * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1
+    |
+    | (running it every 5 minutes is fine on shared hosting). Times are HH:MM on a
+    | 5-minute boundary. frequency: daily | weekly (day 0-6, 0 = Sunday) |
+    | monthly (day 1-28). Disable a profile with enabled=false. Overlapping
+    | runs are refused by the package's flock operation lock.
+    |
+    */
     'schedule' => [
-        'database' => null,
-        'media' => null,
-        'recovery' => null,
-        'health' => null,
+        'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_ENABLED', true),
+        'timezone' => env('QURABA_BACKUP_SCHEDULE_TIMEZONE'),    // null: app timezone
+        'database' => [
+            'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_DATABASE', true),
+            'frequency' => 'daily',
+            'time' => env('QURABA_BACKUP_SCHEDULE_DATABASE_TIME', '02:00'),
+        ],
+        'media' => [
+            'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_MEDIA', true),
+            'frequency' => 'daily',
+            'time' => env('QURABA_BACKUP_SCHEDULE_MEDIA_TIME', '02:30'),
+        ],
+        'recovery' => [
+            'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_RECOVERY', true),
+            'frequency' => 'weekly',
+            'day' => 0,
+            'time' => env('QURABA_BACKUP_SCHEDULE_RECOVERY_TIME', '03:30'),
+        ],
     ],
 
     /* Reserved: retention is plan-only by default when it arrives. */

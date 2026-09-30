@@ -61,7 +61,32 @@ if (($scenario['leak'] ?? false) && $command !== 'version') {
     ));
 }
 
-$repositoryId = str_repeat('ab', 32);
+$repositoryId = is_file($dir.'/repo-id') ? trim((string) file_get_contents($dir.'/repo-id')) : ($scenario['repository_id'] ?? str_repeat('ab', 32));
+
+// Snapshots: scenario-provided ones plus those created by `backup` (stateful).
+$snapshotsFile = $dir.'/snapshots.json';
+$stored = is_file($snapshotsFile) ? (json_decode((string) file_get_contents($snapshotsFile), true) ?: []) : [];
+$allSnapshots = [...($scenario['snapshots'] ?? []), ...$stored];
+
+$optionValues = static function (array $args, string $flag): array {
+    $values = [];
+    foreach ($args as $i => $arg) {
+        if ($arg === '--') {
+            break;
+        }
+        if ($arg === $flag && isset($args[$i + 1])) {
+            $values[] = $args[$i + 1];
+        }
+    }
+
+    return $values;
+};
+
+$positional = static function (array $args): array {
+    $index = array_search('--', $args, true);
+
+    return $index === false ? [] : array_slice($args, $index + 1);
+};
 
 switch ($command) {
     case 'version':
@@ -101,9 +126,45 @@ switch ($command) {
             default => null,
         };
 
+        if ($command === 'backup') {
+            $id = hash('sha256', uniqid('snapshot', true).random_bytes(8));
+            $stored[] = [
+                'id' => $id,
+                'short_id' => substr($id, 0, 8),
+                'time' => gmdate('Y-m-d\TH:i:s\Z'),
+                'tags' => $optionValues($args, '--tag'),
+                'paths' => $positional($args),
+                'hostname' => $optionValues($args, '--host')[0] ?? 'host',
+            ];
+            file_put_contents($snapshotsFile, json_encode($stored));
+            $emit(0, json_encode(['message_type' => 'status', 'percent_done' => 1])."\n".json_encode(['message_type' => 'summary', 'snapshot_id' => $id, 'files_new' => 1])."\n");
+        }
+
+        if ($command === 'snapshots') {
+            // One --tag value: comma-separated tags must ALL match (restic AND semantics);
+            // several --tag flags are alternatives (OR).
+            $tagGroups = array_map(static fn (string $group): array => explode(',', $group), $optionValues($args, '--tag'));
+            $ids = $positional($args);
+            $selected = array_values(array_filter($allSnapshots, static function (array $snapshot) use ($tagGroups, $ids): bool {
+                if ($ids !== [] && ! in_array($snapshot['id'], $ids, true)) {
+                    return false;
+                }
+                if ($tagGroups === []) {
+                    return true;
+                }
+                foreach ($tagGroups as $group) {
+                    if (array_diff($group, $snapshot['tags'] ?? []) === []) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }));
+            $emit(0, json_encode($selected)."\n");
+        }
+
         match ($command) {
             'cat config' => $emit(0, json_encode(['version' => 2, 'id' => $repositoryId, 'chunker_polynomial' => '3da3358b4c2d4f'])."\n"),
-            'snapshots' => $emit(0, json_encode($scenario['snapshots'] ?? [])."\n"),
             'list locks' => $emit(0, implode("\n", $scenario['locks'] ?? []).(($scenario['locks'] ?? []) === [] ? '' : "\n")),
             default => $emit(0, json_encode(['message_type' => 'summary', 'argv' => $args])."\n"),
         };

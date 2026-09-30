@@ -25,3 +25,30 @@
   compare-and-set so concurrent writers cannot both win; indeterminate states are resolved only by
   reconciliation with evidence.
 - **UTC everywhere.** Catalog instants are stored as UTC `DATETIME` values regardless of `app.timezone`.
+
+## Backups (this release)
+
+- **Encryption is mandatory.** Archives (which contain `.env`) are AES-256; a blank password refuses the
+  backup before any data is produced, AES-256 support is checked first, and the verifier rejects any entry
+  that is not AES-256 encrypted — there is no silent plaintext fallback.
+- **Plaintext lifetime.** The SQL dump and metadata exist only inside the run's 0700 operation workspace and
+  are deleted as soon as the encrypted archive is written; `.env` is read in place and never copied. The
+  workspace is removed in a `finally` block.
+- **Spatie isolation.** Only `SpatieArchiveEngine` (and the dumper subclass) touch Spatie. Spatie's zip task
+  gets a private config instance holding the run's password, bound only while the archive is built and
+  removed in `finally`; the host's own `backup` configuration is never modified. Spatie's db-dumper executor
+  (a shell string with an unlimited default timeout) is not used: dumps run as argument arrays with a
+  bounded timeout, credentials only in a temporary 0600 option file.
+- **Remote objects.** Archive and manifest paths are deterministic per run; nothing is overwritten. Existing
+  objects are adopted only after size and full SHA-256 (archives) or canonical content (manifests) match;
+  S3 objects are only visible once complete, so partial uploads can never be adopted. The Restic prefix is
+  refused by the object storage itself. B2 credentials are never registered as a Laravel disk, and provider
+  errors are sanitized and never chained.
+- **Snapshots.** Identity tags are generated centrally; identity filters use Restic's AND form (one
+  comma-joined `--tag`); only full snapshot IDs are used; a retry adopts the run's single snapshot, and more
+  than one is refused rather than resolved by "newest".
+- **Repository identity.** A different repository at the configured location is refused; it is never
+  adopted, and initialization is refused while the application is bound to a repository.
+- **Truthful state.** The manifest is written before the catalog becomes `completed`; unprovable outcomes are
+  `indeterminate` and resolved only from physical evidence; `quiesced` is never claimed because of
+  maintenance mode alone.

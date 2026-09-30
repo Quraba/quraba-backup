@@ -12,11 +12,13 @@ use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Exceptions\ResticUnavailable;
 use Quraba\Backup\Exceptions\ResticVersionMismatch;
 use Quraba\Backup\Restic\RepositoryContextResolver;
+use Quraba\Backup\Restic\RepositoryIdentityGuard;
 use Quraba\Backup\Restic\RepositoryState;
 use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Restic\ResticSnapshot;
+use Throwable;
 
 /**
  * Cheap Restic health: binary, exact version, configuration, password file,
@@ -33,6 +35,7 @@ final readonly class ResticHealthService
         private ResticRepository $repository,
         private RepositoryContextResolver $contexts,
         private OperationCoordinator $coordinator,
+        private RepositoryIdentityGuard $repositoryIdentity,
     ) {}
 
     public function check(): HealthReport
@@ -150,7 +153,7 @@ final readonly class ResticHealthService
             ],
             RepositoryState::Uninitialized => [
                 CheckResult::pass('restic.repository_reachable', 'Repository reachable', 'The repository backend responded.'),
-                CheckResult::fail('restic.repository_initialized', 'Repository initialized', 'No repository exists at the configured location. If this location is correct, run "php artisan backup:restic:init".', $details),
+                CheckResult::fail('restic.repository_initialized', 'Repository initialized', 'No repository exists at the configured location. If this location is correct, run "php artisan quraba:backup:restic:init".', $details),
                 CheckResult::skip('restic.repository_readable', 'Repository readable', 'No repository to read.'),
             ],
             RepositoryState::WrongPassword => [
@@ -181,6 +184,8 @@ final readonly class ResticHealthService
             return;
         }
 
+        $checks[] = $this->identityCheck((string) $inspection->repositoryId);
+
         try {
             $snapshots = $this->repository->snapshots();
             $latest = array_reduce($snapshots, static fn (?ResticSnapshot $carry, ResticSnapshot $snapshot): ResticSnapshot => $carry === null || $snapshot->time->greaterThan($carry->time) ? $snapshot : $carry);
@@ -202,6 +207,26 @@ final readonly class ResticHealthService
         } catch (QurabaBackupException $exception) {
             $checks[] = CheckResult::warn('restic.repository_locks', 'Repository locks', 'Lock state could not be determined: '.$exception->getMessage(), [], HealthState::Unknown);
         }
+    }
+
+    /**
+     * Read-only: compares with the recorded expected identity, never records one.
+     */
+    private function identityCheck(string $currentId): CheckResult
+    {
+        try {
+            $expected = $this->repositoryIdentity->expected();
+        } catch (Throwable $exception) {
+            return CheckResult::skip('restic.repository_identity', 'Repository identity', 'The expected identity could not be read from the catalog (are migrations applied?).');
+        }
+
+        if ($expected === null) {
+            return CheckResult::warn('restic.repository_identity', 'Repository identity', sprintf('Repository %s is not bound yet; the first backup will bind this application to it.', $currentId));
+        }
+
+        return hash_equals($expected->repository_id, $currentId)
+            ? CheckResult::pass('restic.repository_identity', 'Repository identity', sprintf('The configured repository is the expected one (%s).', $currentId))
+            : CheckResult::fail('restic.repository_identity', 'Repository identity', sprintf('Expected repository %s but found %s at the configured location; backups are refused.', $expected->repository_id, $currentId));
     }
 
     /**

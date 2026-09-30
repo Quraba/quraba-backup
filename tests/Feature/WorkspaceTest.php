@@ -213,12 +213,12 @@ final class WorkspaceTest extends TestCase
         $root = $workspace->root();
         unset($workspace);
 
-        $this->artisan('backup:workspace:list', ['--older-than' => 1])->assertSuccessful();
+        $this->artisan('quraba:backup:workspace:list', ['--older-than' => 1])->assertSuccessful();
 
-        $this->artisan('backup:workspace:cleanup', ['--older-than' => 0])->assertFailed();
+        $this->artisan('quraba:backup:workspace:cleanup', ['--older-than' => 0])->assertFailed();
 
         // Threshold of 1 hour: a fresh workspace is not yet abandoned.
-        $this->artisan('backup:workspace:cleanup', ['--older-than' => 1, '--execute' => true])
+        $this->artisan('quraba:backup:workspace:cleanup', ['--older-than' => 1, '--execute' => true])
             ->expectsOutputToContain('No abandoned workspaces')
             ->assertSuccessful();
 
@@ -226,12 +226,12 @@ final class WorkspaceTest extends TestCase
 
         $this->travel(2)->hours();
 
-        $this->artisan('backup:workspace:cleanup', ['--older-than' => 1])
+        $this->artisan('quraba:backup:workspace:cleanup', ['--older-than' => 1])
             ->expectsOutputToContain('PLAN ONLY')
             ->assertSuccessful();
         self::assertDirectoryExists($root, 'Plan mode must not delete.');
 
-        $this->artisan('backup:workspace:cleanup', ['--older-than' => 1, '--execute' => true])->assertSuccessful();
+        $this->artisan('quraba:backup:workspace:cleanup', ['--older-than' => 1, '--execute' => true])->assertSuccessful();
         self::assertDirectoryDoesNotExist($root);
     }
 }

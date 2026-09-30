@@ -58,8 +58,8 @@ final class RedactionTest extends TestCase
     {
         $this->useFakeRestic(['repository' => 'ready', 'leak' => true]);
 
-        $this->artisan('backup:restic:init', ['--force' => true])->assertFailed();
-        $this->artisan('backup:restic:health', ['--json' => true])->assertFailed();
+        $this->artisan('quraba:backup:restic:init', ['--force' => true])->assertFailed();
+        $this->artisan('quraba:backup:restic:health', ['--json' => true])->assertFailed();
 
         Sentinels::assertAbsent($this->logs->dump(), 'logs');
     }
@@ -68,7 +68,7 @@ final class RedactionTest extends TestCase
     {
         $this->useFakeRestic(['repository' => 'ready', 'leak' => true]);
 
-        $exit = Artisan::call('backup:restic:health', ['--json' => true]);
+        $exit = Artisan::call('quraba:backup:restic:health', ['--json' => true]);
         $output = Artisan::output();
 
         self::assertSame(1, $exit);

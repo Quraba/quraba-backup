@@ -7,7 +7,7 @@ stored in the database.
 
 | Variable | Meaning |
 |---|---|
-| `QURABA_BACKUP_APP_ID` | Stable application UUID (generate once with `backup:identity --generate`). Never derived from APP_NAME, APP_URL, hostname, domain or directory. |
+| `QURABA_BACKUP_APP_ID` | Stable application UUID (generate once with `quraba:backup:identity --generate`). Never derived from APP_NAME, APP_URL, hostname, domain or directory. |
 | `QURABA_BACKUP_ENVIRONMENT` | `production`, `staging`, … (falls back to `APP_ENV`; set it explicitly). |
 
 ## Backblaze B2 (customer-owned)
@@ -27,12 +27,15 @@ QURABA_BACKUP_PREFIX=quraba-backup
 Remote layout (one bucket may hold several applications):
 
 ```text
-{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/restic/        ← Restic only (this release)
-{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/archives/…     ← later phase
-{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/manifests/…    ← later phase
+{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/archives/YYYY/MM/DD/{run_uuid}/application.zip
+{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/manifests/YYYY/MM/DD/{run_uuid}.json
+{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/restic/…        ← managed exclusively by Restic
 ```
 
-Do **not** add B2 lifecycle rules that delete objects under the `restic/` prefix; retention is done by Restic.
+The application key needs read, write and list access to the bucket (archives, manifests and the Restic
+repository). Do **not** add B2 lifecycle rules that delete objects under these prefixes; retention (a later
+phase) is done by the package and Restic. Credentials stay in the environment; the package never stores
+them in the database and never registers them as a named Laravel disk.
 
 Restic may use separate credentials via `QURABA_BACKUP_RESTIC_B2_KEY_ID` /
 `QURABA_BACKUP_RESTIC_B2_APPLICATION_KEY`; otherwise the shared B2 key is used. Credentials reach Restic only
@@ -61,13 +64,57 @@ QURABA_BACKUP_RESTIC_PASSWORD_FILE=/home/account/.quraba-backup/restic-password
 repository after a server loss. Restic receives only the file path (`RESTIC_PASSWORD_FILE`). Files readable
 by other users are refused.
 
+## Archive password (mandatory)
+
+Application archives contain `.env`, so they are always AES-256 encrypted:
+
+```dotenv
+QURABA_BACKUP_ARCHIVE_PASSWORD=<long random password, different from APP_KEY and the Restic password>
+```
+
+A missing or blank password refuses database and recovery backups before anything is created. Without the
+password nobody can open the archives — keep an off-server copy. `QURABA_BACKUP_ARCHIVE_INCLUDE_ENV=false`
+leaves `.env` out (not recommended: a clean-host recovery then needs `.env` from elsewhere).
+
+## Database
+
+The application connection (`QURABA_BACKUP_DB_CONNECTION`, default: the default connection) must use the
+`mysql` or `mariadb` driver; the primary (write) host is dumped. The dump tool is discovered
+(`mariadb-dump`, then `mysqldump`, preferring `mysqldump` for Oracle MySQL servers) or set with
+`QURABA_BACKUP_DB_DUMP_BINARY`. `QURABA_BACKUP_DB_DUMP_TIMEOUT` (seconds, default 3600) bounds the dump;
+`QURABA_BACKUP_DB_DUMP_ROUTINES=false` skips stored routines if the database user lacks the privilege.
+
+## Media roots
+
+Configured in `config/restic.php` (`restic.media.roots`); the default is `storage/app/public`:
+
+```php
+'media' => [
+    'roots' => [
+        'public'  => ['path' => storage_path('app/public')],
+        'uploads' => ['path' => public_path('uploads'), 'optional' => true],
+    ],
+],
+```
+
+The key is a stable logical name recorded in manifests. Refused: `/`, HOME, the application root or its
+parents, the whole `storage/` or `public/` directory, the package's private storage, a local Restic
+repository, overlapping roots, and paths that traverse a symlink (unless `allow_symlinks`). `public/storage`
+is Laravel's recreatable link — back up `storage/app/public` instead. Missing roots fail unless `optional`.
+
+## Consistency and schedules
+
+See [backups.md](backups.md#consistency-best_effort-vs-quiesced) for `QURABA_BACKUP_QUIESCENCE_PROVIDER`,
+`QURABA_BACKUP_NO_BACKGROUND_WRITERS`, `QURABA_BACKUP_REQUIRE_QUIESCED`,
+`QURABA_BACKUP_ALLOW_CONSISTENCY_DOWNGRADE` and the `QURABA_BACKUP_SCHEDULE_*` settings.
+
 ## Recovery secrets checklist
 
 Keep these outside the server (e.g. in the customer's password manager):
 
 - B2 key ID, application key, bucket and endpoint
 - Restic repository password
-- Archive encryption password (`QURABA_BACKUP_ARCHIVE_PASSWORD`, used by application archives in a later phase)
+- Archive encryption password (`QURABA_BACKUP_ARCHIVE_PASSWORD`)
 - `QURABA_BACKUP_APP_ID`
 
 The three secrets `APP_KEY`, the archive password and the Restic password must be independent; the doctor
@@ -90,6 +137,13 @@ None of these may be inside `public/`.
 Every Restic operation class has its own positive timeout (`QURABA_BACKUP_RESTIC_TIMEOUT_VERSION`, `_QUERY`,
 `_INIT`, `_BACKUP`, `_RESTORE`, `_CHECK`, `_FORGET`, `_PRUNE`). Zero or negative values are refused — there
 is no "unlimited".
+
+## Restic repository identity
+
+The first proven repository becomes this application's expected repository (see
+[backups.md](backups.md#repository-identity)). Moving to a different repository or location therefore needs
+an explicit operator decision; a later release will provide a command for it. Until then, a different
+repository at the configured location is refused.
 
 ## Restic version
 

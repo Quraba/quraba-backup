@@ -14,7 +14,7 @@ use Throwable;
 
 /**
  * Restic binary, version, password file and repository state (the same
- * cheap checks as backup:restic:health). The doctor never installs Restic;
+ * cheap checks as quraba:backup:restic:health). The doctor never installs Restic;
  * it tells the operator what to run.
  */
 final readonly class ResticChecks implements DoctorCheck
@@ -39,9 +39,9 @@ final readonly class ResticChecks implements DoctorCheck
         $decompressor = $this->container->make(Bzip2Decompressor::class);
         $results[] = $decompressor->isAvailable()
             ? CheckResult::pass('restic.installer_decompression', 'Installer decompression', 'Available via '.$decompressor->method().'.')
-            : CheckResult::warn('restic.installer_decompression', 'Installer decompression', 'Neither ext-bz2 nor a bzip2 binary is available; backup:install-restic cannot unpack the release.');
+            : CheckResult::warn('restic.installer_decompression', 'Installer decompression', 'Neither ext-bz2 nor a bzip2 binary is available; quraba:backup:install-restic cannot unpack the release.');
 
-        // Binary failures already carry the "php artisan backup:install-restic" guidance.
+        // Binary failures already carry the "php artisan quraba:backup:install-restic" guidance.
         return [...$results, ...$this->container->make(ResticHealthService::class)->check()->checks];
     }
 }

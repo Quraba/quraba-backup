@@ -24,6 +24,8 @@ final class ArchitectureTest extends TestCase
         'Database/DatabaseToolLocator.php',         // mysqldump/mariadb --version
         'Health/Doctor/Checks/RuntimeChecks.php',   // php -r probe
         'Health/Doctor/Checks/LockingChecks.php',   // php -r cross-process flock probe
+        'Archive/Database/ArgvMySqlDumper.php',     // mariadb-dump/mysqldump (argument array)
+        'Archive/Database/MySqlDatabaseDumper.php', // passes the factory to the dumper
         'Support/Process/ProcessFactory.php',
         'Support/Process/SymfonyProcessFactory.php',
         'QurabaBackupServiceProvider.php',
@@ -107,6 +109,79 @@ final class ArchitectureTest extends TestCase
         sort($expected);
 
         self::assertSame($expected, $callers, 'A new class starts processes; review it and update the allowlist deliberately.');
+    }
+
+    public function test_every_package_command_uses_the_quraba_backup_namespace(): void
+    {
+        $signatures = 0;
+
+        foreach (self::sources() as $path => $contents) {
+            if (preg_match('/protected \$signature = \'([^\s\']+)/', $contents, $matches) === 1) {
+                $signatures++;
+                self::assertStringStartsWith('quraba:backup:', $matches[1], $path.' must use the quraba:backup:* namespace.');
+            }
+        }
+
+        self::assertGreaterThanOrEqual(10, $signatures);
+    }
+
+    public function test_no_package_code_claims_or_references_bare_backup_commands(): void
+    {
+        $roots = [dirname(__DIR__, 2).'/src', dirname(__DIR__, 2).'/config'];
+
+        foreach ($roots as $root) {
+            /** @var SplFileInfo $file */
+            foreach (new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root)) as $file) {
+                if (! $file->isFile() || $file->getExtension() !== 'php') {
+                    continue;
+                }
+
+                // Bare `backup:*` names belong to spatie/laravel-backup.
+                self::assertDoesNotMatchRegularExpression(
+                    '/(?<![a-z:_-])backup:[a-z]/',
+                    (string) file_get_contents($file->getPathname()),
+                    $file->getPathname().' references a bare backup:* command.',
+                );
+            }
+        }
+    }
+
+    public function test_spatie_is_only_used_behind_the_archive_engine_boundary(): void
+    {
+        $users = [];
+
+        foreach (self::sources() as $path => $contents) {
+            if (preg_match('/\bSpatie\\\\/', $contents) === 1) {
+                $users[] = $path;
+            }
+        }
+
+        sort($users);
+
+        self::assertSame(['Archive/Database/ArgvMySqlDumper.php', 'Archive/SpatieArchiveEngine.php'], $users);
+    }
+
+    public function test_object_stores_never_address_the_restic_prefix(): void
+    {
+        $sources = self::sources();
+
+        foreach (['Archive/ArchiveStore.php', 'Manifest/ManifestStore.php'] as $store) {
+            self::assertStringNotContainsString('resticRoot', $sources[$store], $store);
+            self::assertStringContainsString('assertManaged(', $sources[$store], $store.' must validate every remote path.');
+        }
+
+        // The object storage implementation refuses the Restic prefix itself.
+        self::assertStringContainsString('forbiddenPrefixes', $sources['Storage/FlysystemObjectStorage.php']);
+        self::assertStringContainsString('resticRoot()', $sources['Storage/ObjectStorageFactory.php']);
+    }
+
+    public function test_only_the_runner_executes_restic_and_it_exposes_no_raw_api(): void
+    {
+        foreach (self::sources() as $path => $contents) {
+            if ($path !== 'Restic/ResticRunner.php') {
+                self::assertStringNotContainsString('->binary()->path', $contents, $path.' must not build Restic commands.');
+            }
+        }
     }
 
     public function test_no_arbitrary_restic_command_api_exists(): void

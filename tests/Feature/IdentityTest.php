@@ -35,7 +35,7 @@ final class IdentityTest extends TestCase
         $this->config()->set('app.url', 'https://shop.example.com');
 
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('backup:identity --generate');
+        $this->expectExceptionMessage('quraba:backup:identity --generate');
         $this->resolver()->current();
     }
 
@@ -68,26 +68,26 @@ final class IdentityTest extends TestCase
 
     public function test_identity_command_shows_safe_information_only(): void
     {
-        $this->artisan('backup:identity')
+        $this->artisan('quraba:backup:identity')
             ->expectsOutputToContain(self::APP_ID)
             ->expectsOutputToContain('testing')
             ->assertSuccessful();
 
-        $this->artisan('backup:identity', ['--json' => true])->assertSuccessful();
+        $this->artisan('quraba:backup:identity', ['--json' => true])->assertSuccessful();
     }
 
     public function test_identity_command_guides_setup_when_missing(): void
     {
         $this->config()->set('quraba-backup.app_id', null);
 
-        $this->artisan('backup:identity')
+        $this->artisan('quraba:backup:identity')
             ->expectsOutputToContain('--generate')
             ->assertFailed();
     }
 
     public function test_generate_refuses_to_replace_a_configured_identity(): void
     {
-        $this->artisan('backup:identity', ['--generate' => true])
+        $this->artisan('quraba:backup:identity', ['--generate' => true])
             ->expectsOutputToContain('never regenerated')
             ->assertFailed();
 
@@ -98,7 +98,7 @@ final class IdentityTest extends TestCase
     {
         $this->config()->set('quraba-backup.app_id', null);
 
-        $this->artisan('backup:identity', ['--generate' => true])
+        $this->artisan('quraba:backup:identity', ['--generate' => true])
             ->expectsOutputToContain('QURABA_BACKUP_APP_ID=')
             ->assertSuccessful();
 

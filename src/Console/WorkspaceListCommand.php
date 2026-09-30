@@ -12,7 +12,7 @@ final class WorkspaceListCommand extends PackageCommand
 {
     use ResolvesAbandonmentThreshold;
 
-    protected $signature = 'backup:workspace:list
+    protected $signature = 'quraba:backup:workspace:list
         {--older-than= : Hours after which an inactive workspace counts as abandoned (default from config)}
         {--json : Output machine-readable JSON}';
 

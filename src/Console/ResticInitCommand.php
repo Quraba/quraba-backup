@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Quraba\Backup\Console;
 
 use Quraba\Backup\Exceptions\ConfigurationException;
+use Quraba\Backup\Restic\RepositoryIdentityGuard;
 use Quraba\Backup\Restic\RepositoryState;
 use Quraba\Backup\Restic\ResticRepository;
 use Throwable;
 
 final class ResticInitCommand extends PackageCommand
 {
-    protected $signature = 'backup:restic:init
+    protected $signature = 'quraba:backup:restic:init
         {--force : Skip the interactive confirmation (the repository must still be confirmed absent)}';
 
     protected $description = 'Explicitly initialize the Restic repository after confirming it does not exist yet.';
@@ -41,6 +42,15 @@ final class ResticInitCommand extends PackageCommand
             return self::FAILURE;
         }
 
+        try {
+            // A repository this application is already bound to must never be
+            // silently replaced by a new empty one.
+            $guard = $this->laravel->make(RepositoryIdentityGuard::class);
+            $guard->assertInitializationAllowed();
+        } catch (Throwable $exception) {
+            return $this->failWith($exception);
+        }
+
         $this->line('  Restic reports that no repository exists at this location.');
         $this->line('  If the location has a typo, initializing would create a second, empty repository and leave the real one unused.');
 
@@ -57,12 +67,12 @@ final class ResticInitCommand extends PackageCommand
         }
 
         try {
-            $result = $repository->initialize();
+            $result = $guard->initialize();
         } catch (Throwable $exception) {
             return $this->failWith($exception);
         }
 
-        $this->components->info(sprintf('Repository initialized (id %s, format v%d) and read back successfully.', $result->repositoryId, (int) $result->formatVersion));
+        $this->components->info(sprintf('Repository initialized (id %s, format v%d) and read back successfully; this application is now bound to it.', $result->repositoryId, (int) $result->formatVersion));
         $this->line('  Store the Restic password file contents outside this server now. Without it the repository can never be opened.');
 
         return self::SUCCESS;

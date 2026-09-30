@@ -438,7 +438,7 @@ AES-256 ZIP encryption
 
 subject to runtime capability verification.
 
-`backup:doctor` verifies support before production use.
+`quraba:backup:doctor` verifies support before production use.
 
 ---
 
@@ -500,7 +500,7 @@ QURABA_BACKUP_APP_ID
 The package should provide:
 
 ```bash
-php artisan backup:recovery-checklist
+php artisan quraba:backup:recovery-checklist
 ```
 
 which lists what must be preserved, but does not print secret values.
@@ -1417,8 +1417,8 @@ Abandoned workspaces are detectable separately from deletion.
 Example:
 
 ```bash
-php artisan backup:workspace:list
-php artisan backup:workspace:cleanup --execute
+php artisan quraba:backup:workspace:list
+php artisan quraba:backup:workspace:cleanup --execute
 ```
 
 Cleanup must refuse workspaces belonging to an active operation.
@@ -1645,7 +1645,7 @@ There are three execution paths.
 Immediate:
 
 ```bash
-php artisan backup:run --profile=recovery
+php artisan quraba:backup:run --profile=recovery
 ```
 
 ## Scheduler
@@ -1875,7 +1875,7 @@ Interrupted backup operations are expected.
 Command:
 
 ```bash
-php artisan backup:reconcile
+php artisan quraba:backup:reconcile
 ```
 
 For stale/incomplete runs it inspects reality.
@@ -1933,13 +1933,13 @@ Can lock manager work?
 Command:
 
 ```bash
-php artisan backup:doctor
+php artisan quraba:backup:doctor
 ```
 
 and/or:
 
 ```bash
-php artisan backup:restic:health
+php artisan quraba:backup:restic:health
 ```
 
 ## Recovery health
@@ -1961,7 +1961,7 @@ Is retention stalled?
 Command:
 
 ```bash
-php artisan backup:health
+php artisan quraba:backup:health
 ```
 
 ---
@@ -2166,7 +2166,7 @@ This is a simplified version of Qurb's safety-pin concept and is worth keeping.
 Default:
 
 ```bash
-php artisan backup:retention
+php artisan quraba:backup:retention
 ```
 
 means:
@@ -2178,7 +2178,7 @@ PLAN ONLY
 Actual deletion requires:
 
 ```bash
-php artisan backup:retention --execute
+php artisan quraba:backup:retention --execute
 ```
 
 Scheduled deletion only occurs when explicitly enabled in configuration.
@@ -2212,7 +2212,7 @@ not automatically scheduled
 Command:
 
 ```bash
-php artisan backup:restic:prune
+php artisan quraba:backup:restic:prune
 ```
 
 plan/default behavior where supported.
@@ -2220,7 +2220,7 @@ plan/default behavior where supported.
 Actual:
 
 ```bash
-php artisan backup:restic:prune --execute
+php artisan quraba:backup:restic:prune --execute
 ```
 
 ---
@@ -2347,7 +2347,7 @@ Restore defaults to dry run.
 Example:
 
 ```bash
-php artisan backup:restore --run=UUID --profile=full
+php artisan quraba:backup:restore --run=UUID --profile=full
 ```
 
 must not mutate production.
@@ -2388,7 +2388,7 @@ and an exact confirmation phrase.
 Example:
 
 ```bash
-php artisan backup:restore \
+php artisan quraba:backup:restore \
   --run=RUN_UUID \
   --profile=full \
   --force \
@@ -2845,7 +2845,7 @@ It is not converted to failure for convenience.
 Command:
 
 ```bash
-php artisan backup:restore-reconcile --restore=UUID
+php artisan quraba:backup:restore-reconcile --restore=UUID
 ```
 
 It reads:
@@ -2929,7 +2929,7 @@ This is a primary requirement, not a future convenience.
 Command concept:
 
 ```bash
-php artisan backup:discover --remote
+php artisan quraba:backup:discover --remote
 ```
 
 Uses:
@@ -2982,7 +2982,7 @@ Therefore provide an explicit bootstrap flow.
 Concept:
 
 ```bash
-php artisan backup:bootstrap-env --run=UUID
+php artisan quraba:backup:bootstrap-env --run=UUID
 ```
 
 It:
@@ -3037,7 +3037,7 @@ Any missing newer backup catalog entries can then be reconciled from remote mani
 Command concept:
 
 ```bash
-php artisan backup:catalog:rebuild
+php artisan quraba:backup:catalog:rebuild
 ```
 
 Default:
@@ -3049,7 +3049,7 @@ plan only
 Apply:
 
 ```bash
-php artisan backup:catalog:rebuild --apply
+php artisan quraba:backup:catalog:rebuild --apply
 ```
 
 It scans remote manifests and can recreate missing:
@@ -3458,40 +3458,40 @@ No backup identity depends on local timezone strings.
 Recommended v1 command surface:
 
 ```text
-backup:doctor
+quraba:backup:doctor
 
-backup:install-restic
-backup:restic:init
-backup:restic:health
-backup:restic:check
-backup:restic:prune
+quraba:backup:install-restic
+quraba:backup:restic:init
+quraba:backup:restic:health
+quraba:backup:restic:check
+quraba:backup:restic:prune
 
-backup:run
-backup:health
-backup:list
-backup:reconcile
+quraba:backup:run
+quraba:backup:health
+quraba:backup:list
+quraba:backup:reconcile
 
-backup:retention
+quraba:backup:retention
 
-backup:restore
-backup:restore-reconcile
+quraba:backup:restore
+quraba:backup:restore-reconcile
 
-backup:discover
-backup:bootstrap-env
-backup:catalog:rebuild
+quraba:backup:discover
+quraba:backup:bootstrap-env
+quraba:backup:catalog:rebuild
 
-backup:workspace:list
-backup:workspace:cleanup
+quraba:backup:workspace:list
+quraba:backup:workspace:cleanup
 
-backup:identity
-backup:recovery-checklist
+quraba:backup:identity
+quraba:backup:recovery-checklist
 ```
 
 Not every command has to be implemented in Phase 1, but the architecture reserves these responsibilities.
 
 ---
 
-# 116. `backup:doctor`
+# 116. `quraba:backup:doctor`
 
 This becomes one of the most important commands.
 
@@ -3752,7 +3752,7 @@ Local package installation must not silently initialize a Restic repository mere
 Explicit:
 
 ```bash
-php artisan backup:restic:init
+php artisan quraba:backup:restic:init
 ```
 
 Initialization should first determine whether:
@@ -3777,7 +3777,7 @@ Repository password is essential.
 
 No package feature can recover a Restic repository without it.
 
-`backup:doctor` should warn strongly when the package cannot confirm that an operator has acknowledged out-of-band secret storage.
+`quraba:backup:doctor` should warn strongly when the package cannot confirm that an operator has acknowledged out-of-band secret storage.
 
 It cannot itself know whether a password exists in a password manager, so this is an operational requirement.
 
@@ -4316,13 +4316,13 @@ composer require quraba/quraba-backup
 php artisan vendor:publish ...
 php artisan migrate
 
-php artisan backup:install-restic
+php artisan quraba:backup:install-restic
 
 configure B2 + passwords
 
-php artisan backup:restic:init
+php artisan quraba:backup:restic:init
 
-php artisan backup:doctor
+php artisan quraba:backup:doctor
 ```
 
 Then configure one cPanel Cron:
@@ -4420,7 +4420,7 @@ install Composer packages
 ↓
 minimal recovery config
 ↓
-backup:discover --remote
+quraba:backup:discover --remote
 ↓
 choose exact run UUID
 ↓

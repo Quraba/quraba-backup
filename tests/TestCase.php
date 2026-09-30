@@ -5,15 +5,26 @@ declare(strict_types=1);
 namespace Quraba\Backup\Tests;
 
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use League\Flysystem\Filesystem;
+use League\Flysystem\FilesystemOperator;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 use Orchestra\Testbench\TestCase as Orchestra;
+use Quraba\Backup\Identity\IdentityResolver;
 use Quraba\Backup\QurabaBackupServiceProvider;
+use Quraba\Backup\Security\SecretRedactor;
+use Quraba\Backup\Storage\FlysystemObjectStorage;
+use Quraba\Backup\Storage\RemoteLayout;
+use Quraba\Backup\Storage\RemoteStorage;
 use Quraba\Backup\Tests\Support\CapturingLogger;
 use Quraba\Backup\Tests\Support\Sentinels;
 use Symfony\Component\Uid\Ulid;
 
 abstract class TestCase extends Orchestra
 {
+    use RefreshDatabase;
+
     protected const string APP_ID = '6f614a0b-c447-4e36-9758-347858cbb46b';
 
     protected string $sandbox;
@@ -31,6 +42,7 @@ abstract class TestCase extends Orchestra
 
         $this->logs = new CapturingLogger;
         $this->app->instance(QurabaBackupServiceProvider::LOGGER, $this->logs);
+        $this->useLocalObjectStorage();
 
         // The suite never touches the network: B2 answers like an
         // unauthenticated S3 endpoint, and any other request fails the test.
@@ -77,6 +89,36 @@ abstract class TestCase extends Orchestra
         $config->set('restic.managed_binary', $this->sandbox.'/private/bin/restic');
         $config->set('restic.password_file', $this->sandbox.'/secrets/restic-password');
         $config->set('restic.media.roots', []);
+
+        // A sandboxed .env holding sentinel secrets; it is what gets archived.
+        file_put_contents($this->sandbox.'/.env', implode("\n", [
+            'APP_KEY='.Sentinels::APP_KEY,
+            'DB_PASSWORD='.Sentinels::DB_PASSWORD,
+            'QURABA_BACKUP_B2_APPLICATION_KEY='.Sentinels::B2_SECRET,
+        ])."\n");
+        $app->useEnvironmentPath($this->sandbox);
+    }
+
+    /**
+     * Replaces Backblaze B2 with a local Flysystem directory: the suite never
+     * needs network access or credentials.
+     */
+    protected function useLocalObjectStorage(?FilesystemOperator $filesystem = null): void
+    {
+        $filesystem ??= new Filesystem(new LocalFilesystemAdapter($this->sandbox.'/b2'));
+        $config = $this->config();
+        $redactor = $this->app->make(SecretRedactor::class);
+
+        $this->app->instance(RemoteStorage::class, new RemoteStorage(
+            $config,
+            $this->app->make(IdentityResolver::class),
+            static fn (RemoteLayout $layout): FlysystemObjectStorage => new FlysystemObjectStorage($filesystem, [$layout->resticRoot()], 'local-test-bucket', $redactor),
+        ));
+    }
+
+    protected function bucketPath(string $locator): string
+    {
+        return $this->sandbox.'/b2/'.$locator;
     }
 
     protected static function sandboxRoot(): string

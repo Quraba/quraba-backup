@@ -9,7 +9,7 @@ use Throwable;
 
 final class DoctorCommand extends PackageCommand
 {
-    protected $signature = 'backup:doctor
+    protected $signature = 'quraba:backup:doctor
         {--json : Output machine-readable JSON}';
 
     protected $description = 'Check whether this host and configuration can run Quraba Backup safely.';

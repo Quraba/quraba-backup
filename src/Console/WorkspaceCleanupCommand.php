@@ -13,7 +13,7 @@ final class WorkspaceCleanupCommand extends PackageCommand
 {
     use ResolvesAbandonmentThreshold;
 
-    protected $signature = 'backup:workspace:cleanup
+    protected $signature = 'quraba:backup:workspace:cleanup
         {--older-than= : Hours after which an inactive workspace counts as abandoned (default from config, minimum 1)}
         {--execute : Actually delete abandoned workspaces (default is a plan only)}
         {--json : Output machine-readable JSON}';

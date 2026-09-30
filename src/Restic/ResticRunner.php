@@ -120,15 +120,30 @@ final class ResticRunner
     }
 
     /**
-     * @param  list<string>  $tags  all tags must match (Restic AND semantics within one --tag)
+     * Lists snapshots, optionally filtered.
+     *
+     * Restic tag semantics: tags joined by commas inside ONE --tag flag must
+     * ALL be present (AND); repeating --tag would mean OR. Identity filters
+     * are therefore always passed as a single comma-joined --tag value.
+     *
+     * @param  list<string>  $tags  all tags must match
+     * @param  list<string>  $snapshotIds  exact full snapshot IDs only
      */
-    public function snapshots(array $tags = []): ResticResult
+    public function snapshots(array $tags = [], array $snapshotIds = []): ResticResult
     {
         $arguments = ['snapshots', '--json', '--no-lock'];
 
         if ($tags !== []) {
             $arguments[] = '--tag';
             $arguments[] = implode(',', ResticTag::assertAll($tags));
+        }
+
+        if ($snapshotIds !== []) {
+            $arguments[] = '--';
+
+            foreach ($snapshotIds as $snapshotId) {
+                $arguments[] = Identifiers::assertFullSnapshotId($snapshotId);
+            }
         }
 
         return $this->runRepository(ResticOperation::Snapshots, $arguments);

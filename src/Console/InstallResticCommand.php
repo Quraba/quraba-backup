@@ -10,7 +10,7 @@ use Throwable;
 
 final class InstallResticCommand extends PackageCommand
 {
-    protected $signature = 'backup:install-restic
+    protected $signature = 'quraba:backup:install-restic
         {--force : Replace an existing managed binary (explicit reinstall/upgrade to the pinned version)}';
 
     protected $description = 'Install the package-pinned Restic release (SHA-256 verified, no root required).';

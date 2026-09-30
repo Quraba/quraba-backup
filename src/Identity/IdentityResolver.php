@@ -18,7 +18,7 @@ use Quraba\Backup\Exceptions\ConfigurationException;
  */
 final readonly class IdentityResolver
 {
-    public const string SETUP_GUIDANCE = 'Run "php artisan backup:identity --generate" once, add the printed QURABA_BACKUP_APP_ID line to .env, keep a copy with your recovery secrets, and never change it afterwards.';
+    public const string SETUP_GUIDANCE = 'Run "php artisan quraba:backup:identity --generate" once, add the printed QURABA_BACKUP_APP_ID line to .env, keep a copy with your recovery secrets, and never change it afterwards.';
 
     public function __construct(
         private Repository $config,

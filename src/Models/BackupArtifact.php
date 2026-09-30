@@ -120,7 +120,10 @@ final class BackupArtifact extends PackageModel
     /**
      * Verified Restic snapshot, identified by its full canonical ID.
      */
-    public function markVerifiedSnapshot(string $snapshotId): self
+    /**
+     * @param  array<string, mixed>  $metadata  non-secret verification facts (kind, roots, repository)
+     */
+    public function markVerifiedSnapshot(string $snapshotId, array $metadata = []): self
     {
         if ($this->kind !== ArtifactKind::ResticSnapshot) {
             throw new InvalidArgumentException('Only restic_snapshot artifacts are verified by snapshot ID.');
@@ -129,6 +132,7 @@ final class BackupArtifact extends PackageModel
         return $this->transitionTo(ArtifactStatus::Verified, [
             'snapshot_id' => Identifiers::assertFullSnapshotId($snapshotId),
             'verified_at' => CarbonImmutable::now('UTC'),
+            'metadata' => [...($this->metadata ?? []), ...app(SecretRedactor::class)->redactArray($metadata)],
         ]);
     }
 
@@ -136,7 +140,10 @@ final class BackupArtifact extends PackageModel
      * Verified stored object (archive or manifest), identified by exact
      * locator, SHA-256 and size.
      */
-    public function markVerifiedObject(string $locator, string $sha256, int $byteSize): self
+    /**
+     * @param  array<string, mixed>  $metadata  non-secret verification facts
+     */
+    public function markVerifiedObject(string $locator, string $sha256, int $byteSize, array $metadata = []): self
     {
         if ($this->kind === ArtifactKind::ResticSnapshot) {
             throw new InvalidArgumentException('Restic snapshots must be verified by snapshot ID.');
@@ -155,7 +162,22 @@ final class BackupArtifact extends PackageModel
             'sha256' => Identifiers::assertSha256($sha256),
             'byte_size' => $byteSize,
             'verified_at' => CarbonImmutable::now('UTC'),
+            'metadata' => [...($this->metadata ?? []), ...app(SecretRedactor::class)->redactArray($metadata)],
         ]);
+    }
+
+    /**
+     * Records non-secret facts gathered while the artifact is still in
+     * progress (e.g. an incomplete snapshot ID that must never be adopted).
+     *
+     * @param  array<string, mixed>  $values
+     */
+    public function mergeMetadata(array $values): self
+    {
+        $this->setAttribute('metadata', [...($this->metadata ?? []), ...app(SecretRedactor::class)->redactArray($values)]);
+        $this->save();
+
+        return $this;
     }
 
     public function markFailed(FailureDetails $failure): self

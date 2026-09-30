@@ -79,7 +79,7 @@ final readonly class ResticRepository
         $id = $config['id'] ?? null;
         $version = $config['version'] ?? null;
 
-        if (! is_string($id) || ! Identifiers::isFullSnapshotId($id) || ! is_int($version)) {
+        if (! is_string($id) || ! Identifiers::isRepositoryId($id) || ! is_int($version)) {
             return new RepositoryInspection(RepositoryState::Error, $location, 'The repository config could not be understood; refusing to treat it as healthy.', failureCode: 'restic.output_invalid');
         }
 
@@ -89,6 +89,10 @@ final readonly class ResticRepository
     /**
      * Explicitly initializes a genuinely absent repository and proves that it
      * is readable afterwards.
+     *
+     * @internal use {@see RepositoryIdentityGuard::initialize()}, which also
+     *           refuses to replace a repository the application is bound to
+     *           and records the new repository identity.
      */
     public function initialize(): RepositoryInspection
     {
@@ -130,12 +134,13 @@ final readonly class ResticRepository
     }
 
     /**
-     * @param  list<string>  $tags
+     * @param  list<string>  $tags  all must be present (AND)
+     * @param  list<string>  $snapshotIds  exact full IDs
      * @return list<ResticSnapshot>
      */
-    public function snapshots(array $tags = []): array
+    public function snapshots(array $tags = [], array $snapshotIds = []): array
     {
-        $document = $this->runner->snapshots($tags)->throwIfFailed()->json();
+        $document = $this->runner->snapshots($tags, $snapshotIds)->throwIfFailed()->json();
 
         if (! array_is_list($document)) {
             throw new ResticCommandFailed('`restic snapshots --json` did not return a list.');
@@ -173,7 +178,7 @@ final readonly class ResticRepository
                 continue;
             }
 
-            if (! Identifiers::isFullSnapshotId($line)) {
+            if (! Identifiers::isResticObjectId($line)) {
                 throw new ResticCommandFailed('`restic list locks` returned an unexpected line.');
             }
 

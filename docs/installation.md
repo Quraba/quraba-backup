@@ -1,7 +1,7 @@
 # Installation
 
-> This release installs the **foundation** only: identity, catalog, workspaces, locking, the Restic runtime
-> and diagnostics. It does not create backups yet, and no scheduler entry is needed yet.
+> This release creates verified backups (application archives, media snapshots, Recovery Points) and
+> schedules them. Restore and retention are not implemented yet.
 
 ## 1. Require the package
 
@@ -25,7 +25,7 @@ This publishes `config/quraba-backup.php` and `config/restic.php`. Everything is
 ## 2. Create the application identity (once)
 
 ```bash
-php artisan backup:identity --generate
+php artisan quraba:backup:identity --generate
 ```
 
 The command prints a line such as `QURABA_BACKUP_APP_ID=6f614a0b-…`. Add it to `.env` **once** and store a copy
@@ -41,7 +41,7 @@ QURABA_BACKUP_ENVIRONMENT=production
 ## 3. Install Restic (no root)
 
 ```bash
-php artisan backup:install-restic
+php artisan quraba:backup:install-restic
 ```
 
 Downloads the package-pinned Restic release (currently **0.19.1**), verifies its SHA-256 against the value
@@ -61,7 +61,7 @@ See [configuration.md](configuration.md).
 ## 5. Initialize the repository explicitly
 
 ```bash
-php artisan backup:restic:init
+php artisan quraba:backup:restic:init
 ```
 
 The command inspects the repository first and only initializes when Restic itself reports that no repository
@@ -72,8 +72,28 @@ repository back to prove it works.
 ## 6. Check everything
 
 ```bash
-php artisan backup:doctor
-php artisan backup:restic:health
+php artisan quraba:backup:doctor
+php artisan quraba:backup:restic:health
 ```
 
 Fix every `FAIL`. See [doctor.md](doctor.md).
+
+## 7. First backup
+
+```bash
+php artisan quraba:backup:run          # a Recovery Point (database + .env archive and media snapshot)
+php artisan quraba:backup:list
+```
+
+Exit code 0 means every component was verified and the manifest written. See [backups.md](backups.md).
+
+## 8. Schedule
+
+Add ONE cron entry (the package never edits crontab):
+
+```text
+* * * * * cd /home/account/app && php artisan schedule:run >> /dev/null 2>&1
+```
+
+On shared hosting that only allows a 5-minute interval, `*/5 * * * *` works: all package schedule times are
+on 5-minute boundaries. Check the registered events with `php artisan schedule:list`.

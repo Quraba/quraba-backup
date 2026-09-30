@@ -30,7 +30,7 @@ return [
     /*
     | Binary resolution order:
     |   1. `binary` when explicitly configured (must pass verification; no fallback),
-    |   2. the package-managed binary installed by `php artisan backup:install-restic`,
+    |   2. the package-managed binary installed by `php artisan quraba:backup:install-restic`,
     |   3. a system `restic` from PATH, only when `allow_system_binary` is true.
     | Every candidate must be executable and report exactly the pinned version.
     */
@@ -97,15 +97,21 @@ return [
     ],
 
     /*
-    | Reserved: media backup arrives in a later phase. Each root has a stable
-    | logical name. Never configure `/`, the application root, the storage
-    | parent or the package's private storage as a media root.
+    | Media roots backed up by Restic. The key is the root's stable logical
+    | name (recorded in manifests); `path` must be an application-owned
+    | directory. Refused: `/`, HOME, the application root or its parents, the
+    | whole storage/ or public/ directory, the package's private storage, a
+    | local Restic repository, overlapping roots, and (unless allow_symlinks)
+    | paths that traverse a symlink. `public/storage` is Laravel's recreatable
+    | link — back up `storage/app/public` instead. `optional` roots are skipped
+    | when missing. Symlinks inside a root are stored as links, never followed.
     */
     'media' => [
         'roots' => [
             'public' => [
                 'path' => storage_path('app/public'),
                 'allow_symlinks' => false,
+                'optional' => false,
             ],
         ],
     ],
@@ -115,7 +121,7 @@ return [
     | Installer
     |--------------------------------------------------------------------------
     |
-    | `backup:install-restic` downloads the official compressed release, checks
+    | `quraba:backup:install-restic` downloads the official compressed release, checks
     | it against the pinned SHA-256 below AND the release's SHA256SUMS file,
     | decompresses it, verifies `restic version`, and atomically replaces the
     | managed binary. A mirror may be configured through `download_base_url`

@@ -214,13 +214,13 @@ final class ResticInstallerTest extends TestCase
     {
         $this->installer();
 
-        $this->artisan('backup:install-restic')
+        $this->artisan('quraba:backup:install-restic')
             ->expectsOutputToContain('Installed and verified Restic 0.19.1')
             ->assertSuccessful();
 
         $this->installer();
 
-        $this->artisan('backup:install-restic')
+        $this->artisan('quraba:backup:install-restic')
             ->expectsOutputToContain('already installed')
             ->assertSuccessful();
     }

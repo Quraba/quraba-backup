@@ -4,25 +4,46 @@ declare(strict_types=1);
 
 namespace Quraba\Backup;
 
+use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Filesystem\FilesystemManager;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Log\LogManager;
 use Illuminate\Support\ServiceProvider;
 use Psr\Log\LoggerInterface;
+use Quraba\Backup\Archive\ArchiveMetadata;
+use Quraba\Backup\Archive\ArchiveStore;
+use Quraba\Backup\Archive\ArchiveVerifier;
+use Quraba\Backup\Archive\Database\MySqlDatabaseDumper;
+use Quraba\Backup\Archive\SpatieArchiveEngine;
+use Quraba\Backup\Backup\ApplicationArchiveService;
+use Quraba\Backup\Backup\BackupManager;
+use Quraba\Backup\Backup\BackupReconciler;
+use Quraba\Backup\Consistency\LaravelMaintenanceProvider;
+use Quraba\Backup\Consistency\NoneQuiescenceProvider;
 use Quraba\Backup\Console\DoctorCommand;
 use Quraba\Backup\Console\IdentityCommand;
 use Quraba\Backup\Console\InstallResticCommand;
+use Quraba\Backup\Console\ListCommand;
+use Quraba\Backup\Console\ReconcileCommand;
 use Quraba\Backup\Console\ResticHealthCommand;
 use Quraba\Backup\Console\ResticInitCommand;
+use Quraba\Backup\Console\RunCommand;
 use Quraba\Backup\Console\WorkspaceCleanupCommand;
 use Quraba\Backup\Console\WorkspaceListCommand;
+use Quraba\Backup\Contracts\ArchiveEngine;
+use Quraba\Backup\Contracts\DatabaseDumper;
 use Quraba\Backup\Contracts\LockManager;
+use Quraba\Backup\Contracts\ObjectStorage;
+use Quraba\Backup\Contracts\QuiescenceProvider;
 use Quraba\Backup\Contracts\ReleaseDownloader;
 use Quraba\Backup\Coordination\FileLockManager;
 use Quraba\Backup\Coordination\OperationCoordinator;
 use Quraba\Backup\Database\DatabaseToolLocator;
 use Quraba\Backup\Exceptions\ConfigurationException;
+use Quraba\Backup\Health\Doctor\Checks\BackupReadinessChecks;
 use Quraba\Backup\Health\Doctor\Checks\DatabaseChecks;
 use Quraba\Backup\Health\Doctor\Checks\IdentityChecks;
 use Quraba\Backup\Health\Doctor\Checks\LockingChecks;
@@ -34,6 +55,7 @@ use Quraba\Backup\Health\Doctor\Checks\StorageChecks;
 use Quraba\Backup\Health\Doctor\DoctorService;
 use Quraba\Backup\Health\ResticHealthService;
 use Quraba\Backup\Identity\IdentityResolver;
+use Quraba\Backup\Media\MediaRootResolver;
 use Quraba\Backup\Restic\Installer\Bzip2Decompressor;
 use Quraba\Backup\Restic\Installer\HttpReleaseDownloader;
 use Quraba\Backup\Restic\Installer\ResticInstaller;
@@ -45,8 +67,12 @@ use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Restic\ResticRedactor;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
+use Quraba\Backup\Scheduling\BackupScheduler;
 use Quraba\Backup\Security\KnownSecrets;
 use Quraba\Backup\Security\SecretRedactor;
+use Quraba\Backup\Storage\ObjectStorageFactory;
+use Quraba\Backup\Storage\RemoteLayout;
+use Quraba\Backup\Storage\RemoteStorage;
 use Quraba\Backup\Support\ConfigValue;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\Process\ProcessFactory;
@@ -100,11 +126,18 @@ final class QurabaBackupServiceProvider extends ServiceProvider
         ));
 
         $this->registerRestic();
+        $this->registerBackup();
         $this->registerHealth();
     }
 
     public function boot(): void
     {
+        // Registered whenever the scheduler is resolved (schedule:run,
+        // schedule:list); BackupScheduler guards against duplicates.
+        $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
+            $this->app->make(BackupScheduler::class)->register($schedule);
+        });
+
         if (! $this->app->runningInConsole()) {
             return;
         }
@@ -128,6 +161,9 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             ResticInitCommand::class,
             ResticHealthCommand::class,
             DoctorCommand::class,
+            RunCommand::class,
+            ListCommand::class,
+            ReconcileCommand::class,
         ]);
     }
 
@@ -178,8 +214,82 @@ final class QurabaBackupServiceProvider extends ServiceProvider
         ));
     }
 
+    private function registerBackup(): void
+    {
+        $this->app->singleton(ObjectStorageFactory::class, fn (Application $app): ObjectStorageFactory => new ObjectStorageFactory(
+            $app->make(Repository::class),
+            $app->make(FilesystemManager::class),
+            $app->make(SecretRedactor::class),
+        ));
+
+        $this->app->singleton(RemoteStorage::class, fn (Application $app): RemoteStorage => new RemoteStorage(
+            $app->make(Repository::class),
+            $app->make(IdentityResolver::class),
+            static fn (RemoteLayout $layout): ObjectStorage => $app->make(ObjectStorageFactory::class)->make($layout),
+        ));
+
+        $this->app->singleton(DatabaseDumper::class, MySqlDatabaseDumper::class);
+        $this->app->singleton(ArchiveVerifier::class);
+        $this->app->singleton(ArchiveMetadata::class);
+        $this->app->singleton(ArchiveStore::class);
+
+        $this->app->singleton(ArchiveEngine::class, fn (Application $app): SpatieArchiveEngine => new SpatieArchiveEngine(
+            $app,
+            $app->make(DatabaseDumper::class),
+            $app->make(ArchiveMetadata::class),
+            $app->make(SecretRedactor::class),
+            (bool) $app->make(Repository::class)->get('quraba-backup.archive.include_env', true),
+        ));
+
+        $this->app->singleton(ApplicationArchiveService::class, fn (Application $app): ApplicationArchiveService => new ApplicationArchiveService(
+            $app->make(ArchiveEngine::class),
+            $app->make(ArchiveVerifier::class),
+            $app->make(ArchiveStore::class),
+            $app->make(DatabaseDumper::class),
+            $app->make(Repository::class),
+            $app->make(SecretRedactor::class),
+            $app->environmentFilePath(),
+        ));
+
+        $this->app->singleton(MediaRootResolver::class, fn (Application $app): MediaRootResolver => new MediaRootResolver(
+            $app->make(Repository::class),
+            $app->make(PackagePaths::class),
+            $app->basePath(),
+            $app->publicPath(),
+            $app->storagePath(),
+        ));
+
+        $this->app->singleton(QuiescenceProvider::class, function (Application $app): QuiescenceProvider {
+            $config = $app->make(Repository::class);
+
+            return match ($config->get('quraba-backup.consistency.provider', 'none')) {
+                'none', null, '' => new NoneQuiescenceProvider,
+                'laravel_maintenance' => new LaravelMaintenanceProvider(
+                    $app,
+                    $app->make(Kernel::class),
+                    (bool) $config->get('quraba-backup.consistency.no_background_writers', false),
+                    ConfigValue::positiveInt($config->get('quraba-backup.consistency.maintenance_retry_after', 60), 'quraba-backup.consistency.maintenance_retry_after'),
+                ),
+                default => throw new ConfigurationException('quraba-backup.consistency.provider must be "none" or "laravel_maintenance".'),
+            };
+        });
+
+        $this->app->singleton(BackupScheduler::class);
+
+        $this->app->when([BackupManager::class, BackupReconciler::class])
+            ->needs(LoggerInterface::class)
+            ->give(fn (Application $app): LoggerInterface => self::logger($app));
+    }
+
     private function registerHealth(): void
     {
+        $this->app->bind(BackupReadinessChecks::class, fn (Application $app): BackupReadinessChecks => new BackupReadinessChecks(
+            $app,
+            $app->make(Repository::class),
+            $app->make(PackagePaths::class),
+            $app->environmentFilePath(),
+        ));
+
         $this->app->singleton(DatabaseToolLocator::class, fn (Application $app): DatabaseToolLocator => new DatabaseToolLocator(
             $app->make(Repository::class),
             $app->make(ProcessFactory::class),
@@ -195,7 +305,6 @@ final class QurabaBackupServiceProvider extends ServiceProvider
 
         $this->app->bind(SafetyChecks::class, fn (Application $app): SafetyChecks => new SafetyChecks(
             $app->make(Repository::class),
-            $app->make(PackagePaths::class),
             $app->basePath(),
             $app->publicPath(),
             $app->storagePath(),
@@ -213,6 +322,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
                     DatabaseChecks::class,
                     ObjectStorageChecks::class,
                     ResticChecks::class,
+                    BackupReadinessChecks::class,
                     SafetyChecks::class,
                 ] as $check) {
                     yield new Health\Doctor\LazyDoctorCheck($app, $check);
@@ -224,12 +334,6 @@ final class QurabaBackupServiceProvider extends ServiceProvider
 
     private static function logger(Application $app): LoggerInterface
     {
-        $logger = $app->make(self::LOGGER);
-
-        if (! $logger instanceof LoggerInterface) {
-            throw new ConfigurationException('The Quraba Backup log channel could not be resolved.');
-        }
-
-        return $logger;
+        return $app->make(self::LOGGER);
     }
 }

@@ -71,8 +71,8 @@ final class RealResticRepositoryTest extends TestCase
         self::assertSame([], $this->repository()->snapshots());
         self::assertSame([], $this->repository()->lockIds());
 
-        $this->artisan('backup:restic:init', ['--force' => true])->assertFailed();
-        $this->artisan('backup:restic:health', ['--json' => true])->assertSuccessful();
+        $this->artisan('quraba:backup:restic:init', ['--force' => true])->assertFailed();
+        $this->artisan('quraba:backup:restic:health', ['--json' => true])->assertSuccessful();
     }
 
     public function test_wrong_password_is_detected_and_never_reinitialized(): void
@@ -84,7 +84,7 @@ final class RealResticRepositoryTest extends TestCase
         $inspection = $this->repository()->inspect();
 
         self::assertSame(RepositoryState::WrongPassword, $inspection->state);
-        $this->artisan('backup:restic:init', ['--force' => true])->assertFailed();
+        $this->artisan('quraba:backup:restic:init', ['--force' => true])->assertFailed();
     }
 
     public function test_every_typed_primitive_is_accepted_by_real_restic(): void
@@ -140,6 +140,6 @@ final class RealResticRepositoryTest extends TestCase
 
         self::assertNotSame(RepositoryState::Uninitialized, $inspection->state);
         self::assertNotSame(RepositoryState::Ready, $inspection->state);
-        $this->artisan('backup:restic:init', ['--force' => true])->assertFailed();
+        $this->artisan('quraba:backup:restic:init', ['--force' => true])->assertFailed();
     }
 }

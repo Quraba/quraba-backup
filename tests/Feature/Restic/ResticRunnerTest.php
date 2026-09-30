@@ -87,7 +87,7 @@ final class ResticRunnerTest extends TestCase
         $this->refreshPackageServices();
 
         $this->expectException(ResticUnavailable::class);
-        $this->expectExceptionMessage('backup:install-restic');
+        $this->expectExceptionMessage('quraba:backup:install-restic');
         $this->runner()->binary();
     }
 

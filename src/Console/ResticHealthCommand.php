@@ -9,7 +9,7 @@ use Throwable;
 
 final class ResticHealthCommand extends PackageCommand
 {
-    protected $signature = 'backup:restic:health
+    protected $signature = 'quraba:backup:restic:health
         {--json : Output machine-readable JSON}';
 
     protected $description = 'Cheap Restic health check (binary, version, configuration, repository). Not a `restic check`.';

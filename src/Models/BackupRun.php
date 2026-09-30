@@ -86,11 +86,33 @@ final class BackupRun extends PackageModel
      */
     public function addArtifact(ArtifactKind $kind, array $metadata = []): BackupArtifact
     {
-        if ($this->currentStatus()->isTerminal()) {
+        // Indeterminate runs may still gain artifacts (e.g. a manifest written
+        // by reconciliation); every other terminal run is closed.
+        if ($this->status->isTerminal() && $this->status !== BackupStatus::Indeterminate) {
             throw new IllegalStateTransition(sprintf('Cannot add artifacts to terminal backup run [%s].', $this->uuid));
         }
 
         return BackupArtifact::createFor($this, $kind, $metadata);
+    }
+
+    /**
+     * Records the consistency actually achieved, which is only known once the
+     * quiescence provider has been entered. Allowed only while the run is
+     * active, so a finished run's claim can never be upgraded afterwards.
+     */
+    public function recordConsistency(ConsistencyLevel $consistency, string $explanation): self
+    {
+        if (! $this->status->isActive()) {
+            throw new IllegalStateTransition('Consistency can only be recorded while a backup run is active.');
+        }
+
+        $this->setAttribute('consistency', $consistency);
+        $this->setAttribute('metadata', array_replace_recursive($this->metadata ?? [], [
+            'consistency_explanation' => app(SecretRedactor::class)->redact(mb_substr($explanation, 0, 500)),
+        ]));
+        $this->save();
+
+        return $this;
     }
 
     public function markPreflighting(): self

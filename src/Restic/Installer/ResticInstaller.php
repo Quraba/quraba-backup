@@ -139,7 +139,7 @@ final readonly class ResticInstaller
         }
 
         if (! $version->matches($this->config->version)) {
-            throw new ResticVersionMismatch(sprintf('The managed binary reports Restic %s; this package is pinned to %s. Re-run "php artisan backup:install-restic --force" to replace it explicitly.', $version->version, $this->config->version));
+            throw new ResticVersionMismatch(sprintf('The managed binary reports Restic %s; this package is pinned to %s. Re-run "php artisan quraba:backup:install-restic --force" to replace it explicitly.', $version->version, $this->config->version));
         }
 
         return new InstallResult(InstallOutcome::AlreadyInstalled, $target, $platform, $version);

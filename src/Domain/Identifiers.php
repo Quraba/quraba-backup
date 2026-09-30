@@ -17,9 +17,33 @@ final class Identifiers
 {
     private const string HEX_64 = '/^[0-9a-f]{64}$/';
 
-    public static function isFullSnapshotId(string $value): bool
+    /**
+     * A full Restic object ID (64 lowercase hex characters). Snapshots,
+     * repositories, locks and packs share this shape; use the specific
+     * helpers below to express which object is meant.
+     */
+    public static function isResticObjectId(string $value): bool
     {
         return preg_match(self::HEX_64, $value) === 1;
+    }
+
+    public static function isFullSnapshotId(string $value): bool
+    {
+        return self::isResticObjectId($value);
+    }
+
+    public static function isRepositoryId(string $value): bool
+    {
+        return self::isResticObjectId($value);
+    }
+
+    public static function assertRepositoryId(string $value): string
+    {
+        if (! self::isRepositoryId($value)) {
+            throw new InvalidArgumentException('A full 64-character lowercase hexadecimal Restic repository ID is required.');
+        }
+
+        return $value;
     }
 
     public static function assertFullSnapshotId(string $value): string

@@ -57,7 +57,7 @@ final readonly class ResticBinaryResolver
         }
 
         throw new ResticUnavailable(sprintf(
-            'No Restic binary is available. Run "php artisan backup:install-restic" to install the pinned Restic %s into [%s].',
+            'No Restic binary is available. Run "php artisan quraba:backup:install-restic" to install the pinned Restic %s into [%s].',
             $this->config->version,
             $managed,
         ));
@@ -69,7 +69,7 @@ final readonly class ResticBinaryResolver
     public function verify(string $path, BinarySource $source, Closure $probe): ResticBinary
     {
         if ($source === BinarySource::Managed && is_link($path)) {
-            throw new ResticUnavailable(sprintf('The managed Restic binary [%s] is a symbolic link; the installer only ever writes a regular file. Reinstall with "php artisan backup:install-restic --force".', $path));
+            throw new ResticUnavailable(sprintf('The managed Restic binary [%s] is a symbolic link; the installer only ever writes a regular file. Reinstall with "php artisan quraba:backup:install-restic --force".', $path));
         }
 
         if (! is_file($path)) {
@@ -94,7 +94,7 @@ final readonly class ResticBinaryResolver
                 $path,
                 $version->version,
                 $this->config->version,
-                $source === BinarySource::Managed ? ' Run "php artisan backup:install-restic --force" to install the pinned version.' : '',
+                $source === BinarySource::Managed ? ' Run "php artisan quraba:backup:install-restic --force" to install the pinned version.' : '',
             ));
         }
 

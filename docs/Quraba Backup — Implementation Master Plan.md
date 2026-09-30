@@ -383,7 +383,7 @@ but never silently change an existing identity.
 Command:
 
 ```bash
-php artisan backup:identity
+php artisan quraba:backup:identity
 ```
 
 shows:
@@ -432,8 +432,8 @@ diagnosable abandoned workspace
 Commands reserved:
 
 ```bash
-backup:workspace:list
-backup:workspace:cleanup
+quraba:backup:workspace:list
+quraba:backup:workspace:cleanup
 ```
 
 ---
@@ -725,14 +725,14 @@ Do not initialize on generic failure.
 Implement:
 
 ```bash
-backup:install-restic
-backup:restic:init
-backup:restic:health
+quraba:backup:install-restic
+quraba:backup:restic:init
+quraba:backup:restic:health
 ```
 
 ---
 
-## 2.9 Initial `backup:doctor`
+## 2.9 Initial `quraba:backup:doctor`
 
 Add first version checking:
 
@@ -1271,7 +1271,7 @@ manifest missing after both artifacts succeeded
 Command:
 
 ```bash
-backup:reconcile
+quraba:backup:reconcile
 ```
 
 ---
@@ -1368,7 +1368,7 @@ archive accessibility
 Command:
 
 ```bash
-backup:health
+quraba:backup:health
 ```
 
 ---
@@ -1378,7 +1378,7 @@ backup:health
 Command:
 
 ```bash
-backup:restic:check
+quraba:backup:restic:check
 ```
 
 Separate from cheap health.
@@ -1429,7 +1429,7 @@ unresolved pre-restore safety backup
 Default command:
 
 ```bash
-backup:retention
+quraba:backup:retention
 ```
 
 means plan only.
@@ -1437,7 +1437,7 @@ means plan only.
 Deletion:
 
 ```bash
-backup:retention --execute
+quraba:backup:retention --execute
 ```
 
 For Restic:
@@ -1464,8 +1464,8 @@ mark expired
 Separate:
 
 ```bash
-backup:restic:prune
-backup:restic:prune --execute
+quraba:backup:restic:prune
+quraba:backup:restic:prune --execute
 ```
 
 Default schedule:
@@ -1648,7 +1648,7 @@ instead of pretending full DB import was tested.
 Example:
 
 ```bash
-php artisan backup:restore \
+php artisan quraba:backup:restore \
     --run=UUID \
     --profile=full
 ```
@@ -1876,7 +1876,7 @@ journal intact
 Command:
 
 ```bash
-backup:restore-reconcile --restore=UUID
+quraba:backup:restore-reconcile --restore=UUID
 ```
 
 Use:
@@ -1935,7 +1935,7 @@ This is the real end-to-end definition of Backup.
 Command:
 
 ```bash
-backup:discover --remote
+quraba:backup:discover --remote
 ```
 
 Uses B2 manifests rather than local DB.
@@ -1947,7 +1947,7 @@ Uses B2 manifests rather than local DB.
 Command:
 
 ```bash
-backup:recovery-checklist
+quraba:backup:recovery-checklist
 ```
 
 Lists required externally preserved secrets without printing their values.
@@ -1959,7 +1959,7 @@ Lists required externally preserved secrets without printing their values.
 Command:
 
 ```bash
-backup:bootstrap-env --run=UUID
+quraba:backup:bootstrap-env --run=UUID
 ```
 
 Flow:
@@ -2005,7 +2005,7 @@ Suitable for cPanel.
 Command:
 
 ```bash
-backup:catalog:rebuild
+quraba:backup:catalog:rebuild
 ```
 
 Plan first.
@@ -2013,7 +2013,7 @@ Plan first.
 Then:
 
 ```bash
-backup:catalog:rebuild --apply
+quraba:backup:catalog:rebuild --apply
 ```
 
 Read remote manifests and rebuild missing local catalog rows.

@@ -1,0 +1,16 @@
+includes:
+    - vendor/larastan/larastan/extension.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+        - config
+        - database
+    tmpDir: .phpstan.cache
+    ignoreErrors:
+        # Package config files are merged into the host's config and are the
+        # only place env() is read; Larastan cannot know they are config files.
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/*

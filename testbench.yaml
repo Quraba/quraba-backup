@@ -1,0 +1,2 @@
+providers:
+  - Quraba\Backup\QurabaBackupServiceProvider

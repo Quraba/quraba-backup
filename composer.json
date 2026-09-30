@@ -1,0 +1,79 @@
+{
+    "name": "quraba/quraba-backup",
+    "description": "Backup and disaster-recovery foundation for single Laravel applications on VPS and shared hosting (Backblaze B2 + Restic).",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": [
+        "laravel",
+        "backup",
+        "disaster-recovery",
+        "restic",
+        "backblaze",
+        "b2"
+    ],
+    "authors": [
+        {
+            "name": "Quraba"
+        }
+    ],
+    "require": {
+        "php": "^8.5",
+        "ext-json": "*",
+        "guzzlehttp/guzzle": "^7.9",
+        "illuminate/console": "^13.0",
+        "illuminate/contracts": "^13.0",
+        "illuminate/database": "^13.0",
+        "illuminate/filesystem": "^13.0",
+        "illuminate/http": "^13.0",
+        "illuminate/support": "^13.0",
+        "symfony/process": "^7.4|^8.0"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.20",
+        "orchestra/testbench": "^11.0",
+        "phpunit/phpunit": "^12.0"
+    },
+    "suggest": {
+        "ext-bz2": "Lets backup:install-restic decompress the official Restic release without an external bzip2 binary.",
+        "ext-pdo_mysql": "Required for MySQL/MariaDB application databases.",
+        "ext-posix": "Improves permission diagnostics in backup:doctor."
+    },
+    "autoload": {
+        "psr-4": {
+            "Quraba\\Backup\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Quraba\\Backup\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Quraba\\Backup\\QurabaBackupServiceProvider"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G",
+        "format": "pint",
+        "lint": "pint --test",
+        "check": [
+            "@composer validate --strict",
+            "@lint",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": false
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -71,6 +71,75 @@ final readonly class MediaRootResolver
         return $roots;
     }
 
+    /**
+     * The configured destination of every logical root, for restores. Unlike
+     * {@see self::resolve()} a destination does not have to exist yet (clean
+     * host); an existing one passes the same safety rules as a backup root,
+     * a missing one is validated against its nearest existing ancestor.
+     *
+     * @return list<MediaDestination>
+     */
+    public function destinations(): array
+    {
+        $configured = $this->config->get('restic.media.roots', []);
+
+        if (! is_array($configured) || $configured === []) {
+            throw new MediaPathUnsafe('No media roots are configured (restic.media.roots).');
+        }
+
+        $destinations = [];
+
+        foreach ($configured as $name => $definition) {
+            $name = (string) $name;
+            $root = null;
+            $path = is_array($definition) ? ($definition['path'] ?? null) : $definition;
+            $optional = is_array($definition) && (bool) ($definition['optional'] ?? false);
+            $staging = is_array($definition) && is_string($definition['staging'] ?? null) && $definition['staging'] !== '' ? $definition['staging'] : null;
+
+            if (is_string($path) && PathGuard::isAbsolute($path) && is_dir(PathGuard::normalizeAbsolute($path))) {
+                // Existing: exactly the backup rules (returns the real path).
+                $root = $this->resolveOne($name, is_array($definition) ? [...$definition, 'optional' => false] : $definition);
+            }
+
+            if ($root === null) {
+                if (preg_match(self::NAME_PATTERN, $name) !== 1 || ! is_string($path) || ! PathGuard::isAbsolute($path)) {
+                    throw new MediaPathUnsafe(sprintf('Media root [%s] must have a stable lowercase name and an absolute path.', mb_substr($name, 0, 40)));
+                }
+
+                $normalized = PathGuard::normalizeAbsolute($path);
+
+                if (file_exists($normalized) || is_link($normalized)) {
+                    throw new MediaPathUnsafe(sprintf('Media root [%s] (%s) exists but is not a directory.', $name, $normalized));
+                }
+
+                $ancestor = PathGuard::nearestExistingAncestor($normalized);
+                $realAncestor = $ancestor === null ? null : PathGuard::real($ancestor);
+
+                if ($ancestor === null || $realAncestor === null) {
+                    throw new MediaPathUnsafe(sprintf('Media root [%s] has no existing parent directory.', $name));
+                }
+
+                $real = rtrim($realAncestor, '/').substr($normalized, strlen(rtrim(PathGuard::normalizeAbsolute($ancestor), '/')));
+
+                if ($this->same($real, $this->publicPath.'/storage')) {
+                    throw new MediaPathUnsafe(sprintf('Media root [%s] is the public/storage link of Laravel.', $name));
+                }
+
+                $this->assertNotDangerous($name, $real);
+                $root = new MediaRoot($name, $real);
+                $exists = false;
+            } else {
+                $exists = true;
+            }
+
+            $destinations[] = new MediaDestination($name, $root->path, $exists, $optional, is_array($definition) && (bool) ($definition['allow_symlinks'] ?? false), $staging);
+        }
+
+        $this->assertNoOverlap(array_map(static fn (MediaDestination $d): MediaRoot => new MediaRoot($d->name, $d->path), $destinations));
+
+        return $destinations;
+    }
+
     private function resolveOne(string $name, mixed $definition): ?MediaRoot
     {
         if (preg_match(self::NAME_PATTERN, $name) !== 1) {

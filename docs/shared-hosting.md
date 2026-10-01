@@ -38,3 +38,20 @@ Redis, queue worker or daemon.
 - Database dumps stream to disk (`--quick --result-file`) and archives are hashed and uploaded as streams, so
   PHP memory does not grow with the backup size.
 - If `php_uname()` is disabled, the Restic installer falls back to `/proc/sys/kernel/arch`.
+
+## Restoring on shared hosting
+
+- Run a live restore from SSH, never from a web request, and from a session that survives a disconnect
+  (`screen`, `tmux` or `nohup`): a restore that is killed after its destructive boundary is `indeterminate`.
+- Set `QURABA_BACKUP_QUIESCENCE_PROVIDER=laravel_maintenance`. Before the restore, **disable the cron entry**
+  and stop any queue worker, then set `QURABA_BACKUP_NO_BACKGROUND_WRITERS=true`: maintenance mode only blocks
+  web requests, and a live restore refuses to run unless writers are proven stopped.
+- The private workspace (`storage/app/private/quraba-backup/work`) and `storage/app/public` are normally on
+  the same filesystem of your account, so media is staged and swapped without any extra configuration. The
+  old media tree is parked next to the live one until you remove it with
+  `quraba:backup:restore-reconcile --restore=UUID --cleanup-parked`; plan for that disk space.
+- The database account only needs its usual privileges on the application database. `DROP DATABASE` and
+  `CREATE DATABASE` are never used. When you restore under another cPanel account (other database user name),
+  set `QURABA_BACKUP_RESTORE_REWRITE_DEFINERS=true`.
+- The application stays in maintenance mode after a restore. Verify it, re-enable the cron entry, then run
+  `php artisan up`.

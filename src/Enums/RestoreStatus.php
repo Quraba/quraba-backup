@@ -20,6 +20,12 @@ enum RestoreStatus: string implements StatusMachine
     case Failed = 'failed';
     case Indeterminate = 'indeterminate';
 
+    /**
+     * An operator explicitly closed an indeterminate restore whose final
+     * state could not be proven. It claims neither success nor failure.
+     */
+    case Abandoned = 'abandoned';
+
     public static function initial(): static
     {
         return self::Pending;
@@ -41,7 +47,7 @@ enum RestoreStatus: string implements StatusMachine
             self::Quiescing => [self::SafetyBackup, self::Applying, self::Failed],
             self::Applying => [self::Verifying, self::Failed, self::Indeterminate],
             self::Verifying => [self::Completed, self::Failed, self::Indeterminate],
-            self::Completed, self::Failed, self::Indeterminate => [],
+            self::Completed, self::Failed, self::Indeterminate, self::Abandoned => [],
         };
     }
 
@@ -55,7 +61,17 @@ enum RestoreStatus: string implements StatusMachine
      */
     public static function reconciliationOutcomes(): array
     {
-        return [self::Completed, self::Failed];
+        return [self::Completed, self::Failed, self::Abandoned];
+    }
+
+    /**
+     * States in which nothing further is expected of a restore.
+     *
+     * @return list<self>
+     */
+    public static function settled(): array
+    {
+        return [self::Completed, self::Failed, self::Abandoned];
     }
 
     /**

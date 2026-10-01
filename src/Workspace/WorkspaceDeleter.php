@@ -7,10 +7,11 @@ namespace Quraba\Backup\Workspace;
 use Quraba\Backup\Support\PathGuard;
 
 /**
- * Deletes one operation workspace tree and nothing else.
+ * Deletes one package-owned tree (an operation workspace, or the staging
+ * directory the package created for one restore) and nothing else.
  *
- * - the target must be named `op-{ULID}` and really live directly inside the
- *   workspace base directory;
+ * - the target must match the expected name (`op-{ULID}` by default) and
+ *   really live directly inside the given base directory;
  * - symbolic links are removed as links and never followed, so a link that
  *   points outside the workspace cannot cause foreign files to be deleted;
  * - errors are collected, not thrown.
@@ -22,10 +23,10 @@ final class WorkspaceDeleter
     /**
      * @return list<string> errors (empty on success)
      */
-    public static function deleteTree(string $root, string $realBase): array
+    public static function deleteTree(string $root, string $realBase, string $namePattern = WorkspaceManager::DIRECTORY_PATTERN): array
     {
-        if (preg_match(WorkspaceManager::DIRECTORY_PATTERN, basename($root)) !== 1) {
-            return [sprintf('Refusing to delete [%s]: not an operation workspace directory.', $root)];
+        if (preg_match($namePattern, basename($root)) !== 1) {
+            return [sprintf('Refusing to delete [%s]: not a package-owned directory.', $root)];
         }
 
         if (is_link($root)) {

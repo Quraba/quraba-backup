@@ -15,17 +15,24 @@ use Quraba\Backup\Enums\RestoreStatus;
 use Quraba\Backup\Exceptions\IllegalStateTransition;
 use Quraba\Backup\Models\Casts\UtcDateTime;
 use Quraba\Backup\Models\Concerns\HasControlledStatus;
+use Quraba\Backup\Restore\Journal\JournalPhase;
+use Quraba\Backup\Restore\Journal\RestoreJournal;
 use Quraba\Backup\Security\SecretRedactor;
 
 /**
  * Catalog record of a restore (dry run or live).
  *
- * Restore execution arrives in a later phase; this batch provides the frozen
- * schema and the state rules it must obey:
+ * State rules:
  *  - a dry run can never enter a live-only state;
  *  - source identities are frozen once recorded;
  *  - after the destructive boundary, failure can only be recorded as
- *    INDETERMINATE until reconciliation proves otherwise.
+ *    INDETERMINATE until reconciliation proves otherwise, and it can never
+ *    be resolved to FAILED.
+ *
+ * For a LIVE restore this row is a mirror, not the authority: the row
+ * lives in the database the restore replaces (and does not exist at all on
+ * a clean host), so the external restore journal decides. After a database
+ * import the row is rebuilt from the journal ({@see self::syncFromJournal()}).
  *
  * @property int $id
  * @property string $uuid
@@ -155,6 +162,25 @@ final class RestoreRun extends PackageModel
         ]);
     }
 
+    /**
+     * Clean-host restore only: the target was proven empty, so there is
+     * nothing a safety backup could preserve.
+     *
+     * @param  array<string, mixed>  $evidence
+     */
+    public function markSafetyBackupNotRequired(array $evidence): self
+    {
+        $this->assertLive(RestoreStatus::SafetyBackup);
+
+        if ($evidence === []) {
+            throw new InvalidArgumentException('Skipping the safety backup requires proof that the target is empty.');
+        }
+
+        return $this->transitionTo(RestoreStatus::SafetyBackup, [
+            'metadata' => [...($this->metadata ?? []), 'safety_backup' => RestoreJournal::SAFETY_NOT_REQUIRED, 'clean_host_proof' => app(SecretRedactor::class)->redactArray($evidence)],
+        ]);
+    }
+
     public function markQuiescing(): self
     {
         $this->assertLive(RestoreStatus::Quiescing);
@@ -166,7 +192,7 @@ final class RestoreRun extends PackageModel
     {
         $this->assertLive(RestoreStatus::Applying);
 
-        if ($this->pre_change_run_uuid === null) {
+        if ($this->pre_change_run_uuid === null && ($this->metadata['safety_backup'] ?? null) !== RestoreJournal::SAFETY_NOT_REQUIRED) {
             throw new IllegalStateTransition('A live restore cannot apply changes before a pre-change safety backup is recorded.');
         }
 
@@ -246,6 +272,10 @@ final class RestoreRun extends PackageModel
             throw new InvalidArgumentException('A failed reconciliation outcome requires failure details.');
         }
 
+        if ($outcome === RestoreStatus::Failed && $this->hasCrossedDestructiveBoundary()) {
+            throw new IllegalStateTransition('A restore that crossed its destructive boundary can only be resolved as completed (proven) or abandoned (explicit operator decision), never as failed.');
+        }
+
         $now = CarbonImmutable::now('UTC');
         $metadata = $this->metadata ?? [];
         $metadata['reconciliation'] = [
@@ -255,13 +285,78 @@ final class RestoreRun extends PackageModel
         ];
 
         $attributes = ['metadata' => $metadata];
-        $attributes[$outcome === RestoreStatus::Failed ? 'failed_at' : 'completed_at'] = $now;
+
+        if ($outcome !== RestoreStatus::Abandoned) {
+            $attributes[$outcome === RestoreStatus::Failed ? 'failed_at' : 'completed_at'] = $now;
+        }
 
         if ($failure !== null) {
             $attributes = [...$attributes, ...$this->failureAttributes($failure)];
         }
 
         return $this->forceReconciledStatus($outcome, $attributes);
+    }
+
+    /**
+     * Rebuilds (or creates) the audit row of a live restore from its journal.
+     *
+     * Needed because a database restore replaces the very table this row
+     * lives in: the imported table is an old copy that cannot contain the
+     * running restore, and on a clean host the row never existed. Whatever
+     * the row currently says is overwritten; the journal is the authority.
+     */
+    public static function syncFromJournal(RestoreJournal $journal): self
+    {
+        $run = self::query()->where('uuid', $journal->restoreUuid())->first() ?? new self;
+        $source = $journal->source();
+        $terminal = $journal->terminal();
+        $failure = is_array($terminal['failure'] ?? null) ? $terminal['failure'] : [];
+
+        $status = match (true) {
+            $journal->outcome() === RestoreJournal::TERMINAL_COMPLETED => RestoreStatus::Completed,
+            $journal->outcome() === RestoreJournal::TERMINAL_FAILED => RestoreStatus::Failed,
+            $journal->outcome() === RestoreJournal::RESOLUTION_ABANDONED => RestoreStatus::Abandoned,
+            $journal->terminalState() === RestoreJournal::TERMINAL_INDETERMINATE => RestoreStatus::Indeterminate,
+            $journal->phase()->rank() >= JournalPhase::Verifying->rank() => RestoreStatus::Verifying,
+            $journal->phase()->rank() >= JournalPhase::Applying->rank() => RestoreStatus::Applying,
+            $journal->phase()->rank() >= JournalPhase::SafetyBackupStarting->rank() => RestoreStatus::SafetyBackup,
+            $journal->phase() === JournalPhase::Quiesced => RestoreStatus::Quiescing,
+            default => RestoreStatus::Validating,
+        };
+
+        $at = static fn (mixed $value): ?CarbonImmutable => is_string($value) ? CarbonImmutable::parse($value)->utc() : null;
+        $settledAt = $at($journal->resolution()['at'] ?? ($terminal['at'] ?? null));
+        $string = static fn (mixed $value): ?string => is_string($value) ? $value : null;
+
+        if (! $run->exists) {
+            $run->setAttribute('uuid', $journal->restoreUuid());
+        }
+
+        $run->setAttribute('mode', RestoreMode::Restore);
+        $run->setAttribute('profile', $journal->profile());
+        $run->setAttribute('source_run_uuid', $journal->sourceRunUuid());
+        $run->setAttribute('source_archive_locator', $string($source['archive_locator'] ?? null));
+        $run->setAttribute('source_archive_sha256', $string($source['archive_sha256'] ?? null));
+        $run->setAttribute('source_snapshot_id', $string($source['snapshot_id'] ?? null));
+        $run->setAttribute('pre_change_run_uuid', $journal->safetyRunUuid());
+        $run->setAttribute('destructive_started_at', $at($journal->destructiveStartedAt()));
+        $run->setAttribute('completed_at', $status === RestoreStatus::Completed ? $settledAt : null);
+        $run->setAttribute('failed_at', $status === RestoreStatus::Failed ? $settledAt : null);
+        $run->setAttribute('failure_stage', $status === RestoreStatus::Completed ? null : $string($failure['stage'] ?? null));
+        $run->setAttribute('failure_code', $status === RestoreStatus::Completed ? null : $string($failure['code'] ?? null));
+        $run->setAttribute('failure_message', $status === RestoreStatus::Completed ? null : $string($failure['message'] ?? null));
+        $run->setAttribute('metadata', app(SecretRedactor::class)->redactArray([
+            ...($run->metadata ?? []),
+            'source' => $source,
+            'clean_host' => $journal->isCleanHost(),
+            'safety_backup' => $journal->safetyBackup()['requirement'] ?? null,
+            'journal' => ['sequence' => $journal->sequence(), 'phase' => $journal->phase()->value, 'synced_at' => CarbonImmutable::now('UTC')->toIso8601ZuluString()],
+            'resolution' => $journal->resolution(),
+        ]));
+        $run->withStatusWrite(fn () => $run->setAttribute('status', $status));
+        $run->save();
+
+        return $run;
     }
 
     /**

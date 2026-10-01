@@ -101,6 +101,18 @@ final class PathGuard
     }
 
     /**
+     * A path as it is compared with a path reported by another tool (Restic
+     * reports Windows paths with backslashes): forward slashes and an
+     * upper-case drive letter. Purely lexical.
+     */
+    public static function comparable(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+
+        return preg_match('~^[A-Za-z]:~', $path) === 1 ? strtoupper($path[0]).substr($path, 1) : $path;
+    }
+
+    /**
      * Canonical real path with forward slashes, or null when it does not exist.
      */
     public static function real(string $path): ?string

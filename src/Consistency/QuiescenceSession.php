@@ -27,6 +27,8 @@ final class QuiescenceSession
         public readonly string $explanation,
         private readonly Closure $release,
         private readonly Closure $stillQuiesced,
+        /** False when the application was already quiesced before enter(): leave() then changes nothing. */
+        public readonly bool $enteredHere = true,
     ) {}
 
     public static function none(string $provider, string $explanation): self

@@ -1,8 +1,9 @@
 # Backups
 
 Quraba Backup creates verified backups of one Laravel application in the customer's B2 bucket.
-Health, explicit retention, repository maintenance, remote discovery and restore **dry runs** are available.
-Live restore is not implemented. See [Recovery operations](recovery-operations.md).
+Health, explicit retention, repository maintenance, remote discovery and restore dry runs are described in
+[recovery operations](recovery-operations.md); the live restore in [restore](restore.md); recovery onto a
+new host in [disaster recovery](disaster-recovery.md).
 
 ## Profiles
 

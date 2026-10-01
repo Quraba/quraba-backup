@@ -38,3 +38,20 @@ Every package error carries a machine-readable code in brackets, e.g. `[restic.w
 | `restic.snapshot_uncertain` | Restic failed but a snapshot may exist; run `quraba:backup:reconcile`. |
 | `quiescence.failed` | Quiesced Recovery Points are required but cannot be proven, or maintenance mode could not be entered/released. |
 | Exit code 1 with "quiescence could not be released" | The backup finished but `php artisan up` failed; bring the site up manually after checking it. |
+| `restore.confirmation_required` | A live restore needs `--force` **and** `--confirm=<exact phrase>`. Nothing was changed. |
+| `restore.quiescence_unproven` | The quiescence provider cannot prove writers are stopped. Use `laravel_maintenance` and declare `QURABA_BACKUP_NO_BACKGROUND_WRITERS=true` only when it is true. There is no best-effort live restore. |
+| `restore.unresolved_restore` | An earlier live restore is unresolved. Run `quraba:backup:restore-reconcile --restore=UUID` and follow its guidance. |
+| `restore.safety_backup_failed` | The pre-change safety backup could not be verified. Nothing was changed; fix backups (`quraba:backup:doctor`) first. |
+| `restore.catalog_unavailable` | The catalog tables are missing. Run the package migrations, or use `--clean-host` on a new empty host. |
+| `restore.clean_host_refused` | `--clean-host` was given but the database holds objects or a media root holds files. Omit the flag (a safety backup is taken) or empty the target. |
+| `restore.database_target_unsafe` | The live database could not be proven, changed since preflight, is a system schema or the scratch database — or the dump defines objects for another account (see `restore.rewrite_definers`). Nothing was changed. |
+| `restore.database_apply_failed` / `restore.database_verification_failed` | The import stopped or its result is not the backup's schema. The restore is `indeterminate`; see [restore](restore.md#reconciliation). |
+| `restore.media_staging_unavailable` | No private staging area on the media root's filesystem. Configure `restic.media.roots.{name}.staging`. |
+| `restore.media_apply_failed` / `restore.media_verification_failed` | A media root could not be renamed or is not the staged tree. Nothing is copied or rolled back; reconcile the restore. |
+| `restore.source_changed` | The exact source changed between validation and the destructive boundary (expired, replaced repository, modified dump). Nothing was changed. |
+| `restore.journal_failed` | The restore journal could not be written or read. The step it was about to record did not happen. Check the private storage directory. |
+| `restore.scratch_cleanup_failed` | The scratch validation database could not be emptied; it is contaminated. The live database was not touched. Empty the scratch database manually. |
+| `retention.restore_unresolved` | Destructive retention is refused while a live restore is unresolved. Reconcile the restore. |
+| `retention.deletion_unproven` | A component could not be proven absent. What was proven is already recorded remotely; repeat retention later. |
+| `recovery.env_bootstrap_failed` | `bootstrap-env` could not recover `.env` (wrong archive password, target exists or is public, archive without `.env`). Nothing was written. |
+| Restore exit code 3 | The restore is `indeterminate`: it stopped after its destructive boundary. The application stays in maintenance mode; run `quraba:backup:restore-reconcile --restore=UUID`. |

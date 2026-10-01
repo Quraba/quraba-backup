@@ -16,6 +16,11 @@ final class NoneQuiescenceProvider implements QuiescenceProvider
         return 'none';
     }
 
+    public function claimsQuiescence(): bool
+    {
+        return false;
+    }
+
     public function enter(): QuiescenceSession
     {
         return QuiescenceSession::none($this->name(), 'Application writes may continue while the database and media are captured.');

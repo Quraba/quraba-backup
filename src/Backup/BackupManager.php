@@ -4,12 +4,17 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Backup;
 
+use Closure;
 use Illuminate\Contracts\Config\Repository;
+use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
 use Quraba\Backup\Consistency\QuiescenceSession;
 use Quraba\Backup\Contracts\QuiescenceProvider;
+use Quraba\Backup\Coordination\HeldLocks;
+use Quraba\Backup\Coordination\LockName;
 use Quraba\Backup\Coordination\OperationCoordinator;
 use Quraba\Backup\Domain\FailureDetails;
+use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Enums\ArtifactKind;
 use Quraba\Backup\Enums\ArtifactStatus;
 use Quraba\Backup\Enums\BackupProfile;
@@ -79,6 +84,39 @@ final readonly class BackupManager
         } finally {
             $locks->release();
         }
+    }
+
+    /**
+     * The verified pre-change safety backup of a LIVE restore.
+     *
+     * It runs through exactly the same pipeline as every other backup, with
+     * three differences: it runs under the locks the restore already holds
+     * (the restore owns the global and restore locks for its whole
+     * destructive lifecycle), its trigger is `pre_restore` with the restore
+     * UUID in its metadata, and it is pinned the moment it is requested so
+     * retention can never remove it while the restore is unresolved.
+     *
+     * @param  Closure(BackupRun): void  $announce  called with the requested run BEFORE it executes (the restore journal records it)
+     */
+    public function runSafetyBackup(BackupProfile $profile, HeldLocks $locks, string $restoreUuid, Closure $announce): BackupRunResult
+    {
+        if (! $locks->holds(LockName::GlobalOperation) || ! $locks->holds(LockName::Restore)) {
+            throw new InvalidArgumentException('A safety backup may only run under the global and restore locks of its live restore.');
+        }
+
+        $identity = $this->identities->current();
+
+        $run = BackupRun::request($profile, BackupTrigger::PreRestore, ConsistencyLevel::None, [
+            'package_version' => PackageVersion::current(),
+            'app_id' => $identity->appId,
+            'environment' => $identity->environment,
+            'restore_uuid' => Identifiers::assertUuid($restoreUuid, 'The restore UUID'),
+            'safety_backup' => true,
+        ]);
+        $run->pin(BackupRun::safetyPinHorizon(), 'Pre-change safety backup of restore '.$restoreUuid.'; protected while that restore is unresolved.');
+        $announce($run);
+
+        return $this->execute($run, $identity);
     }
 
     private function execute(BackupRun $run, ApplicationIdentity $identity): BackupRunResult

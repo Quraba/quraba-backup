@@ -14,7 +14,10 @@ final readonly class SchemaFingerprinter
     public function fingerprint(string $connection): string
     {
         $rows = $this->database->connection($connection)->select(
-            'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION'
+            'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION',
+            [],
+            // Always the primary: a replica may lag behind a restore or a backup.
+            false,
         );
         $lines = array_map(static fn (mixed $row): string => implode('|', array_map(
             static fn (mixed $value): string => is_scalar($value) ? (string) $value : '',

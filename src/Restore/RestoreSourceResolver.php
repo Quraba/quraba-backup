@@ -17,8 +17,18 @@ use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Retention\RetentionTombstoneStore;
 use Quraba\Backup\Storage\RemoteStorage;
+use Quraba\Backup\Support\LocalCatalog;
 
-/** Resolves only an exact UUID, cross-checking local and remote immutable facts. */
+/**
+ * Resolves only an exact UUID, cross-checking local and remote immutable
+ * facts. Never "latest", never a short ID.
+ *
+ * Works without a local catalog (clean host): the immutable remote manifest
+ * and the retention expiry records are then the only source. A local run
+ * that is not terminal although an immutable manifest exists for it is a
+ * stale catalog copy (a restored database contains the row of the very
+ * backup that produced it, frozen mid-run) and is not trusted.
+ */
 final readonly class RestoreSourceResolver
 {
     public function __construct(
@@ -26,14 +36,21 @@ final readonly class RestoreSourceResolver
         private RemoteManifestCatalog $manifests,
         private RetentionTombstoneStore $tombstones,
         private RemoteStorage $storage,
+        private LocalCatalog $catalog,
     ) {}
 
     public function resolve(string $runUuid, RestoreProfile $profile): RestoreSource
     {
         $runUuid = Identifiers::assertUuid($runUuid, 'The restore source run UUID');
         $identity = $this->identities->current();
-        $local = BackupRun::query()->where('uuid', $runUuid)->with('artifacts')->first();
+        $local = $this->catalog->available() ? BackupRun::query()->where('uuid', $runUuid)->with('artifacts')->first() : null;
         $remote = $this->manifests->find($identity, $runUuid);
+
+        if ($local !== null && $remote !== null && ! in_array($local->status, [BackupStatus::Completed, BackupStatus::Partial], true)) {
+            // A manifest is only written when a run is finalized: the local
+            // row is a stale copy and the immutable manifest decides.
+            $local = null;
+        }
 
         if ($local === null && $remote === null) {
             throw RestoreFailed::sourceUnavailable('no local run or remote manifest has this exact UUID');

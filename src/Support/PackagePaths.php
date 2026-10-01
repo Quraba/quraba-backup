@@ -21,6 +21,7 @@ final readonly class PackagePaths
         public string $workspaces,
         public string $locks,
         public string $cache,
+        public string $journal,
     ) {}
 
     public static function fromConfig(Repository $config): self
@@ -36,6 +37,9 @@ final readonly class PackagePaths
             workspaces: self::absolute($workspaces ?? $root.'/work', 'quraba-backup.paths.workspaces'),
             locks: self::absolute($locks ?? $root.'/locks', 'quraba-backup.paths.locks'),
             cache: self::absolute($cache ?? $root.'/cache/restic', 'restic.cache_dir'),
+            // Restore journals always live below the private root: they are the
+            // authority about live restores and must never be relocated by accident.
+            journal: $root.'/journal',
         );
     }
 

@@ -7,9 +7,13 @@ namespace Quraba\Backup\Restore;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\DatabaseManager;
 use Quraba\Backup\Archive\Database\MySqlDatabaseDumper;
+use Quraba\Backup\Contracts\RestoreStepObserver;
 use Quraba\Backup\Database\DatabaseToolLocator;
+use Quraba\Backup\Database\DefinerFilter;
+use Quraba\Backup\Database\DumpInspector;
 use Quraba\Backup\Database\DumpSchemaFingerprinter;
 use Quraba\Backup\Database\MySqlOptionFile;
+use Quraba\Backup\Database\MySqlSchema;
 use Quraba\Backup\Database\SchemaFingerprinter;
 use Quraba\Backup\Database\ServerFlavor;
 use Quraba\Backup\Exceptions\RestoreFailed;
@@ -20,7 +24,17 @@ use Quraba\Backup\Workspace\OperationWorkspace;
 use Quraba\Backup\Workspace\WorkspaceArea;
 use Throwable;
 
-/** Artifact/schema checks, with an optional import into a proven separate scratch DB. */
+/**
+ * Artifact/schema checks, with an optional import into a proven separate
+ * scratch DB.
+ *
+ * The scratch database is emptied again after every import, successful or
+ * not. If that cleanup fails the validation FAILS with
+ * `restore.scratch_cleanup_failed` (never hidden behind the import's own
+ * outcome): the scratch database is contaminated, the next validation
+ * refuses it because it is not empty, and nothing broader is ever attempted
+ * to "fix" it automatically.
+ */
 final readonly class RestoreDatabaseValidator
 {
     public function __construct(
@@ -30,10 +44,12 @@ final readonly class RestoreDatabaseValidator
         private DatabaseToolLocator $tools,
         private ProcessFactory $processes,
         private SchemaFingerprinter $schemas,
+        private MySqlSchema $schema,
+        private RestoreStepObserver $steps,
     ) {}
 
     /** @param array<string, mixed> $metadata
-     * @return array{level: string, dump_bytes: int, dump_schema_fingerprint: ?string, live_schema_fingerprint: ?string, scratch_schema_fingerprint: ?string}
+     * @return array{level: string, dump_bytes: int, dump_tables: int, dump_definers: list<string>, dump_schema_fingerprint: ?string, live_schema_fingerprint: ?string, scratch_schema_fingerprint: ?string}
      */
     public function validate(string $dump, array $metadata, DbValidationLevel $level, OperationWorkspace $workspace): array
     {
@@ -56,6 +72,10 @@ final readonly class RestoreDatabaseValidator
         if (is_int($recordedSize) && $recordedSize !== $size) {
             throw RestoreFailed::reconstructionFailed('the SQL dump size differs from archive metadata');
         }
+
+        // Every level: the dump must be a plain single-database dump.
+        $inspection = DumpInspector::inspect($dump);
+        $tables = $inspection['tables'];
 
         $fingerprint = null;
         $scratchFingerprint = null;
@@ -81,6 +101,8 @@ final readonly class RestoreDatabaseValidator
         return [
             'level' => $level->value,
             'dump_bytes' => $size,
+            'dump_tables' => count($tables),
+            'dump_definers' => $inspection['definers'],
             'dump_schema_fingerprint' => $fingerprint,
             'live_schema_fingerprint' => is_string($dbMeta['schema_fingerprint'] ?? null) ? $dbMeta['schema_fingerprint'] : null,
             'scratch_schema_fingerprint' => $scratchFingerprint,
@@ -113,8 +135,9 @@ final readonly class RestoreDatabaseValidator
             throw RestoreFailed::scratchUnsafe('the scratch connection points to a different database than configured');
         }
         $this->assertScratchPrivileges($productionName, $scratchName, $scratchDb);
-        if ($this->objects($scratchName) !== []) {
-            throw RestoreFailed::scratchUnsafe('the dedicated scratch database is not empty');
+        $existing = $this->schema->inventory($scratchName);
+        if (! $existing->isEmpty()) {
+            throw RestoreFailed::scratchUnsafe(sprintf('the dedicated scratch database is not empty (%d object(s)); it may be contaminated by an earlier validation whose cleanup failed. Empty it manually', $existing->count()));
         }
 
         $version = $metadata['server_version'] ?? null;
@@ -138,27 +161,66 @@ final readonly class RestoreDatabaseValidator
             throw RestoreFailed::scratchImportFailed('the private SQL dump cannot be opened');
         }
 
+        $imported = null;
+        $importFailure = null;
+
         try {
+            $this->steps->reached('scratch.import_starting');
             $process = $this->processes->make(
                 [$tool->path, '--defaults-extra-file='.$optionFile, '--binary-mode', '--default-character-set=utf8mb4', $scratchDb],
                 $workspace->area(WorkspaceArea::Restore), ChildEnvironment::build(),
                 (float) ConfigValue::positiveInt($this->config->get('quraba-backup.timeouts.database_dump', 3600), 'quraba-backup.timeouts.database_dump'),
             );
-            $process->setInput($stream);
+            // The scratch account is deliberately another, confined account:
+            // it can only create views, triggers and routines as itself.
+            $process->setInput(DefinerFilter::stream($stream, strip: true));
             $process->run();
             if ($process->getExitCode() !== 0) {
                 throw RestoreFailed::scratchImportFailed('the database client rejected the dump');
             }
 
-            return $this->schemas->fingerprint($scratchName);
+            $imported = $this->schemas->fingerprint($scratchName);
+            $this->steps->reached('scratch.import_finished');
         } catch (RestoreFailed $exception) {
-            throw $exception;
+            $importFailure = $exception;
         } catch (Throwable) {
-            throw RestoreFailed::scratchImportFailed('the database client or schema inspection failed');
+            $importFailure = RestoreFailed::scratchImportFailed('the database client or schema inspection failed');
         } finally {
             fclose($stream);
             MySqlOptionFile::destroy($optionFile);
-            $this->clean($scratchName);
+        }
+
+        // The cleanup outcome is reported in its own right. One exact attempt:
+        // no retries, nothing broader than the objects found in the scratch DB.
+        try {
+            $this->steps->reached('scratch.cleanup_starting');
+            $this->schema->drop($scratchName, $scratchDb, $this->schema->inventory($scratchName));
+        } catch (Throwable $cleanupFailure) {
+            throw RestoreFailed::scratchCleanupFailed(sprintf(
+                'after a %s import %s. The live application database was not touched. Empty the scratch database manually; the next scratch validation refuses it while it is not empty%s',
+                $importFailure === null ? 'successful' : 'failed',
+                $this->contamination($scratchName),
+                $importFailure === null ? '' : '. The import itself also failed: '.$importFailure->getMessage(),
+            ), $cleanupFailure);
+        }
+
+        if ($importFailure !== null) {
+            throw $importFailure;
+        }
+
+        if ($imported === null) {
+            throw RestoreFailed::scratchImportFailed('no schema fingerprint was produced');
+        }
+
+        return $imported;
+    }
+
+    private function contamination(string $scratchName): string
+    {
+        try {
+            return sprintf('it still holds %d object(s)', $this->schema->inventory($scratchName)->count());
+        } catch (Throwable) {
+            return 'its remaining content could not be inspected';
         }
     }
 
@@ -185,53 +247,5 @@ final readonly class RestoreDatabaseValidator
             $statements[] = $grant;
         }
         ScratchAccountGrants::assertConfined($statements, $scratchDb);
-    }
-
-    /** @return list<array{name: string, type: string}> */
-    private function objects(string $connection): array
-    {
-        $db = $this->database->connection($connection);
-        $rows = [
-            ...$db->select('SELECT TABLE_NAME AS name, TABLE_TYPE AS type FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE()'),
-            ...$db->select('SELECT ROUTINE_NAME AS name, ROUTINE_TYPE AS type FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE()'),
-            ...$db->select("SELECT EVENT_NAME AS name, 'EVENT' AS type FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE()"),
-        ];
-        $objects = [];
-        foreach ($rows as $row) {
-            $name = is_object($row) ? ($row->name ?? null) : null;
-            $type = is_object($row) ? ($row->type ?? null) : null;
-            if (! is_string($name) || ! is_string($type) || ! in_array($type, ['BASE TABLE', 'VIEW', 'PROCEDURE', 'FUNCTION', 'EVENT'], true)) {
-                throw RestoreFailed::scratchUnsafe('the scratch database inventory is invalid');
-            }
-            $objects[] = ['name' => $name, 'type' => $type];
-        }
-
-        usort($objects, static fn (array $a, array $b): int => [$a['type'], $a['name']] <=> [$b['type'], $b['name']]);
-
-        return $objects;
-    }
-
-    private function clean(string $connection): void
-    {
-        $db = $this->database->connection($connection);
-        $db->statement('SET FOREIGN_KEY_CHECKS=0');
-        try {
-            $objects = $this->objects($connection);
-            $order = ['EVENT' => 0, 'PROCEDURE' => 1, 'FUNCTION' => 1, 'VIEW' => 2, 'BASE TABLE' => 3];
-            usort($objects, static fn (array $a, array $b): int => [$order[$a['type']], $a['name']] <=> [$order[$b['type']], $b['name']]);
-            foreach ($objects as $object) {
-                $name = '`'.str_replace('`', '``', $object['name']).'`';
-                $drop = match ($object['type']) {
-                    'EVENT' => 'DROP EVENT IF EXISTS ',
-                    'PROCEDURE' => 'DROP PROCEDURE IF EXISTS ',
-                    'FUNCTION' => 'DROP FUNCTION IF EXISTS ',
-                    'VIEW' => 'DROP VIEW IF EXISTS ',
-                    default => 'DROP TABLE IF EXISTS ',
-                };
-                $db->statement($drop.$name);
-            }
-        } finally {
-            $db->statement('SET FOREIGN_KEY_CHECKS=1');
-        }
     }
 }

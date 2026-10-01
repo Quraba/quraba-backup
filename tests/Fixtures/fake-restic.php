@@ -88,6 +88,33 @@ $positional = static function (array $args): array {
     return $index === false ? [] : array_slice($args, $index + 1);
 };
 
+// Where a snapshot path lives below a restore target (and in the fake's own
+// content store): the absolute path without its leading slash, `C:/` as `C/`.
+$relativeOf = static function (string $path): ?string {
+    $relative = ltrim(str_replace('\\', '/', $path), '/');
+    $relative = preg_replace('~^([A-Za-z]):/~', '$1/', $relative);
+
+    return is_string($relative) && ! str_contains($relative, '..') ? $relative : null;
+};
+
+// Copies a tree, keeping symbolic links as links (like Restic does).
+$copyTree = static function (string $from, string $to) use (&$copyTree): void {
+    @mkdir($to, 0700, true);
+    foreach (scandir($from) ?: [] as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+        $source = $from.'/'.$entry;
+        if (is_link($source)) {
+            @symlink((string) readlink($source), $to.'/'.$entry);
+        } elseif (is_dir($source)) {
+            $copyTree($source, $to.'/'.$entry);
+        } else {
+            copy($source, $to.'/'.$entry);
+        }
+    }
+};
+
 switch ($command) {
     case 'version':
         $emit(0, json_encode([
@@ -137,6 +164,13 @@ switch ($command) {
                 'hostname' => $optionValues($args, '--host')[0] ?? 'host',
             ];
             file_put_contents($snapshotsFile, json_encode($stored));
+            // Keep the real content, so a restore materializes exactly it.
+            foreach ($positional($args) as $root) {
+                $relative = $relativeOf($root);
+                if ($relative !== null && is_dir($root)) {
+                    $copyTree($root, $dir.'/data/'.$id.'/'.$relative);
+                }
+            }
             $emit(0, json_encode(['message_type' => 'status', 'percent_done' => 1])."\n".json_encode(['message_type' => 'summary', 'snapshot_id' => $id, 'files_new' => 1])."\n");
         }
 
@@ -178,20 +212,56 @@ switch ($command) {
         }
 
         if ($command === 'restore') {
-            $id = $args[1] ?? '';
+            // `ID` restores every path below the target; `ID:{parent}` with
+            // `--include /{directory}` restores exactly one root directory.
+            [$id, $subfolder] = array_pad(explode(':', $args[1] ?? '', 2), 2, null);
             $target = $optionValues($args, '--target')[0] ?? null;
             $matched = array_values(array_filter($allSnapshots, static fn (array $snapshot): bool => $snapshot['id'] === $id));
             if (count($matched) !== 1 || ! is_string($target)) {
                 $emit(1, '', "unknown exact snapshot or target\n");
             }
+            if ((scandir($target) ?: []) !== ['.', '..']) {
+                $emit(1, '', "the restore target is not empty\n");
+            }
+            $includes = $optionValues($args, '--include');
+            if ($subfolder !== null) {
+                $restored = 0;
+                foreach ($matched[0]['paths'] as $root) {
+                    $relative = $relativeOf($root);
+                    foreach ($includes as $include) {
+                        if ($relative !== null && '/'.$relative === rtrim($subfolder, '/').$include) {
+                            $data = $dir.'/data/'.$id.'/'.$relative;
+                            if (is_dir($data)) {
+                                $copyTree($data, $target.$include);
+                            } else {
+                                @mkdir($target.$include, 0700, true);
+                                file_put_contents($target.$include.'/restored-fixture.txt', 'restored');
+                            }
+                            $restored++;
+                        }
+                    }
+                }
+                if ($restored === 0) {
+                    $emit(1, '', "Fatal: path not found in snapshot\n");
+                }
+                $emit(0, json_encode(['message_type' => 'summary', 'files_restored' => $restored])."\n");
+            }
             foreach ($matched[0]['paths'] as $root) {
-                $relative = ltrim(str_replace('\\', '/', $root), '/');
-                $relative = preg_replace('~^([A-Za-z]):/~', '$1/', $relative);
-                if (! is_string($relative) || str_contains($relative, '..')) {
+                $relative = $relativeOf($root);
+                if ($relative === null) {
                     $emit(1, '', "unsafe path\n");
                 }
-                @mkdir($target.'/'.$relative, 0700, true);
-                file_put_contents($target.'/'.$relative.'/restored-fixture.txt', 'restored');
+                if ($includes !== [] && ! in_array('/'.$relative, $includes, true)) {
+                    continue;
+                }
+                $data = $dir.'/data/'.$id.'/'.$relative;
+                if (is_dir($data)) {
+                    $copyTree($data, $target.'/'.$relative);
+                } else {
+                    // Scenario-provided snapshots carry no content.
+                    @mkdir($target.'/'.$relative, 0700, true);
+                    file_put_contents($target.'/'.$relative.'/restored-fixture.txt', 'restored');
+                }
             }
             $emit(0, json_encode(['message_type' => 'summary', 'files_restored' => 1])."\n");
         }

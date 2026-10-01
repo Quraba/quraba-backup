@@ -96,6 +96,10 @@ return [
         'client_binary' => env('QURABA_BACKUP_DB_CLIENT_BINARY'),
         // Include stored procedures/functions in the dump (triggers are always included).
         'dump_routines' => (bool) env('QURABA_BACKUP_DB_DUMP_ROUTINES', true),
+        // Scheduled events are only dumped when enabled (the database account
+        // needs the EVENT privilege). A live restore replaces the database
+        // exactly: events that are not in the backup do not come back.
+        'dump_events' => (bool) env('QURABA_BACKUP_DB_DUMP_EVENTS', false),
         'tool_search_paths' => [
             '/usr/bin',
             '/usr/local/bin',
@@ -170,6 +174,8 @@ return [
         'download' => (int) env('QURABA_BACKUP_DOWNLOAD_TIMEOUT', 600),
         'tool_probe' => (int) env('QURABA_BACKUP_TOOL_PROBE_TIMEOUT', 20),
         'database_dump' => (int) env('QURABA_BACKUP_DB_DUMP_TIMEOUT', 3600),
+        // Importing a dump into the live database during a live restore.
+        'database_import' => (int) env('QURABA_BACKUP_DB_IMPORT_TIMEOUT', 7200),
     ],
 
     'logging' => [
@@ -221,16 +227,40 @@ return [
         'database' => ['keep_latest' => 7, 'keep_daily' => 14, 'keep_weekly' => 8, 'keep_monthly' => 12, 'keep_yearly' => 2],
         'media' => ['keep_latest' => 7, 'keep_daily' => 14, 'keep_weekly' => 8, 'keep_monthly' => 12, 'keep_yearly' => 2],
         'recovery' => ['keep_latest' => 4, 'keep_weekly' => 8, 'keep_monthly' => 12, 'keep_yearly' => 2],
+        // How long the pre-change safety backup of a SETTLED live restore is
+        // kept. While a restore is unresolved (or failed and not yet
+        // acknowledged) its safety backup is kept indefinitely.
         'safety_days' => 30,
     ],
 
-    /* Restore is a dry-run-only preparation workflow in this release. */
+    /*
+    |--------------------------------------------------------------------------
+    | Restore
+    |--------------------------------------------------------------------------
+    |
+    | `quraba:backup:restore` is a dry run unless BOTH --force and
+    | --confirm=<confirmation_phrase> are given. A live restore additionally
+    | requires a quiescence provider that PROVES writers are stopped
+    | (consistency.provider=laravel_maintenance with no_background_writers),
+    | takes a verified pre-change safety backup first, and leaves the
+    | application in maintenance mode afterwards (`auto_up` false): bring it
+    | up yourself after verifying it.
+    |
+    | `db_validation_level`: artifact | schema | scratch_import (the last one
+    | imports the dump into the dedicated `scratch_connection` first).
+    |
+    */
     'restore' => [
         'require_atomic_media_swap' => true,
         'safety_margin_percent' => 20,
         'db_validation_level' => env('QURABA_BACKUP_RESTORE_DB_VALIDATION', 'artifact'),
         'scratch_connection' => env('QURABA_BACKUP_SCRATCH_CONNECTION'),
-        'auto_up' => false,
+        'auto_up' => (bool) env('QURABA_BACKUP_RESTORE_AUTO_UP', false),
+        // A dump names the account that defined each view, trigger and
+        // routine. Restoring as ANOTHER account (typically on a new host)
+        // is refused before anything is changed, unless this is enabled:
+        // those objects are then created as the restoring account.
+        'rewrite_definers' => (bool) env('QURABA_BACKUP_RESTORE_REWRITE_DEFINERS', false),
         'confirmation_phrase' => 'RESTORE_APPLICATION',
     ],
 

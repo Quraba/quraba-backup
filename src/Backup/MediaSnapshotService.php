@@ -26,6 +26,7 @@ use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Restic\ResticSnapshot;
 use Quraba\Backup\Restic\SnapshotIdentity;
 use Quraba\Backup\Restic\SnapshotKind;
+use Quraba\Backup\Support\PathGuard;
 
 /**
  * Creates or adopts the Restic media snapshot of one run and proves it.
@@ -235,8 +236,6 @@ final readonly class MediaSnapshotService
 
     private static function normalizePath(string $path): string
     {
-        $path = str_replace('\\', '/', $path);
-
-        return preg_match('~^[A-Za-z]:~', $path) === 1 ? strtoupper($path[0]).substr($path, 1) : $path;
+        return PathGuard::comparable($path);
     }
 }

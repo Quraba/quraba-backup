@@ -71,14 +71,18 @@ final readonly class ArchiveMetadata
         ];
     }
 
-    private function migrationFingerprint(string $connection): ?string
+    /**
+     * SHA-256 over the ordered migration names: a server-independent proof
+     * that a restored database holds the same migration history.
+     */
+    public function migrationFingerprint(string $connection): ?string
     {
         $configured = $this->config->get('database.migrations');
         $table = is_array($configured) ? ($configured['table'] ?? null) : $configured;
         $table = is_string($table) && $table !== '' ? $table : 'migrations';
 
         try {
-            $migrations = $this->database->connection($connection)->table($table)->orderBy('migration')->pluck('migration')->all();
+            $migrations = $this->database->connection($connection)->table($table)->useWritePdo()->orderBy('migration')->pluck('migration')->all();
         } catch (Throwable) {
             return null;
         }

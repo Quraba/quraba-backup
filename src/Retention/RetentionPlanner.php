@@ -22,8 +22,14 @@ use Quraba\Backup\Exceptions\RetentionFailed;
  *  - the newest verified application archive and the newest verified media
  *    snapshot (of any family), the newest complete Recovery Point and the
  *    newest quiesced complete Recovery Point;
- *  - pinned runs, pre-restore safety backups (reserved: never expired yet)
- *    and runs referenced by unresolved restores (external protections).
+ *  - pinned runs and runs protected by restore evidence (external
+ *    protections: sources and safety backups of unresolved restores, safety
+ *    backups inside their retention window).
+ *
+ * Pre-restore safety backups are not ordinary backups: they never count
+ * towards a family's keep rules or "newest" protections (so they cannot
+ * push a real backup out), and they are kept exactly as long as a pin or an
+ * external protection says so.
  *
  * Runs that are not terminal (running, verifying, indeterminate …) are never
  * candidates, so their artifacts are never touched. The result is checked
@@ -61,7 +67,7 @@ final class RetentionPlanner
         }
 
         foreach (RetentionPolicy::FAMILIES as $family) {
-            $this->applyPolicy(array_values(array_filter($candidates, static fn (RetentionCandidate $c): bool => $c->family === $family)), $policies[$family], $reasons);
+            $this->applyPolicy(array_values(array_filter($candidates, static fn (RetentionCandidate $c): bool => $c->family === $family && ! $c->isSafetyBackup())), $policies[$family], $reasons);
         }
 
         $this->applyProtections($candidates, $externalProtections, $now, $reasons);
@@ -144,7 +150,7 @@ final class RetentionPlanner
 
         foreach ($firsts as $reason => $matches) {
             foreach ($candidates as $candidate) {
-                if ($matches($candidate)) {
+                if (! $candidate->isSafetyBackup() && $matches($candidate)) {
                     $reasons[$candidate->runUuid][] = $reason;
 
                     break;
@@ -155,10 +161,6 @@ final class RetentionPlanner
         foreach ($candidates as $candidate) {
             if ($candidate->pinnedUntil !== null && $candidate->pinnedUntil->greaterThan($now)) {
                 $reasons[$candidate->runUuid][] = 'protected:pinned';
-            }
-
-            if ($candidate->trigger === 'pre_restore') {
-                $reasons[$candidate->runUuid][] = 'protected:pre_restore_safety';
             }
 
             if (isset($external[$candidate->runUuid])) {
@@ -172,6 +174,10 @@ final class RetentionPlanner
         $byFamily = [];
 
         foreach ($plan->decisions as $decision) {
+            if ($decision->candidate->isSafetyBackup()) {
+                continue;
+            }
+
             $family = $decision->candidate->family;
             $byFamily[$family] ??= ['candidates' => 0, 'kept' => 0];
             $byFamily[$family]['candidates']++;

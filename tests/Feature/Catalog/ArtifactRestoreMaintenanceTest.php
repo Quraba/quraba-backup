@@ -169,8 +169,20 @@ final class ArtifactRestoreMaintenanceTest extends TestCase
         self::assertSame(RestoreStatus::Indeterminate, $restore->fresh()?->status);
         self::assertSame('7', $restore->fresh()?->requested_by_id);
 
-        $restore->resolveIndeterminate(RestoreStatus::Failed, ['journal' => 'db import incomplete'], $this->failure('database.import_failed'));
-        self::assertSame(RestoreStatus::Failed, $restore->fresh()?->status);
+        // After the destructive boundary FAILED can never be proven, not even
+        // by reconciliation; only "completed" (proven) or an explicit
+        // operator "abandoned" may close the restore.
+        try {
+            $restore->resolveIndeterminate(RestoreStatus::Failed, ['journal' => 'db import incomplete'], $this->failure('database.import_failed'));
+            self::fail('A destructive restore was resolved as failed.');
+        } catch (IllegalStateTransition) {
+            self::assertSame(RestoreStatus::Indeterminate, $restore->fresh()?->status);
+        }
+
+        $restore->resolveIndeterminate(RestoreStatus::Abandoned, ['operator' => 'explicit decision'], $this->failure('restore.abandoned'));
+        self::assertSame(RestoreStatus::Abandoned, $restore->fresh()?->status);
+        self::assertNull($restore->fresh()?->completed_at);
+        self::assertNull($restore->fresh()?->failed_at);
     }
 
     public function test_applying_without_safety_backup_is_refused(): void

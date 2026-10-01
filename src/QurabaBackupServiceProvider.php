@@ -23,6 +23,8 @@ use Quraba\Backup\Backup\BackupManager;
 use Quraba\Backup\Backup\BackupReconciler;
 use Quraba\Backup\Consistency\LaravelMaintenanceProvider;
 use Quraba\Backup\Consistency\NoneQuiescenceProvider;
+use Quraba\Backup\Console\BootstrapEnvCommand;
+use Quraba\Backup\Console\CatalogRebuildCommand;
 use Quraba\Backup\Console\DiscoverCommand;
 use Quraba\Backup\Console\DoctorCommand;
 use Quraba\Backup\Console\HealthCommand;
@@ -30,21 +32,25 @@ use Quraba\Backup\Console\IdentityCommand;
 use Quraba\Backup\Console\InstallResticCommand;
 use Quraba\Backup\Console\ListCommand;
 use Quraba\Backup\Console\ReconcileCommand;
+use Quraba\Backup\Console\RecoveryChecklistCommand;
 use Quraba\Backup\Console\ResticCheckCommand;
 use Quraba\Backup\Console\ResticHealthCommand;
 use Quraba\Backup\Console\ResticInitCommand;
 use Quraba\Backup\Console\ResticPruneCommand;
 use Quraba\Backup\Console\RestoreCommand;
+use Quraba\Backup\Console\RestoreReconcileCommand;
 use Quraba\Backup\Console\RetentionCommand;
 use Quraba\Backup\Console\RunCommand;
 use Quraba\Backup\Console\WorkspaceCleanupCommand;
 use Quraba\Backup\Console\WorkspaceListCommand;
 use Quraba\Backup\Contracts\ArchiveEngine;
 use Quraba\Backup\Contracts\DatabaseDumper;
+use Quraba\Backup\Contracts\DatabaseReplacement;
 use Quraba\Backup\Contracts\LockManager;
 use Quraba\Backup\Contracts\ObjectStorage;
 use Quraba\Backup\Contracts\QuiescenceProvider;
 use Quraba\Backup\Contracts\ReleaseDownloader;
+use Quraba\Backup\Contracts\RestoreStepObserver;
 use Quraba\Backup\Coordination\FileLockManager;
 use Quraba\Backup\Coordination\OperationCoordinator;
 use Quraba\Backup\Database\DatabaseToolLocator;
@@ -67,6 +73,9 @@ use Quraba\Backup\Maintenance\ResticMaintenanceService;
 use Quraba\Backup\Manifest\ManifestStore;
 use Quraba\Backup\Manifest\RemoteManifestCatalog;
 use Quraba\Backup\Media\MediaRootResolver;
+use Quraba\Backup\Recovery\CatalogRebuilder;
+use Quraba\Backup\Recovery\EnvBootstrapper;
+use Quraba\Backup\Recovery\RecoveryChecklist;
 use Quraba\Backup\Restic\Installer\Bzip2Decompressor;
 use Quraba\Backup\Restic\Installer\HttpReleaseDownloader;
 use Quraba\Backup\Restic\Installer\ResticInstaller;
@@ -79,10 +88,21 @@ use Quraba\Backup\Restic\ResticRedactor;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Restore\ArchiveReconstructor;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
+use Quraba\Backup\Restore\Live\CleanHostProof;
+use Quraba\Backup\Restore\Live\ExactDatabaseReplacement;
+use Quraba\Backup\Restore\Live\ExactDirectoryReplacement;
+use Quraba\Backup\Restore\Live\LiveRestoreService;
+use Quraba\Backup\Restore\Live\MediaStaging;
+use Quraba\Backup\Restore\Live\RestoreReconciler;
+use Quraba\Backup\Restore\Live\SafetyBackupInspector;
+use Quraba\Backup\Restore\Live\SafetyBackupService;
+use Quraba\Backup\Restore\NullRestoreStepObserver;
 use Quraba\Backup\Restore\ResticReconstructor;
 use Quraba\Backup\Restore\RestoreDatabaseValidator;
 use Quraba\Backup\Restore\RestoreDryRunService;
 use Quraba\Backup\Restore\RestorePreflight;
+use Quraba\Backup\Restore\RestorePreparation;
 use Quraba\Backup\Restore\RestoreSourceResolver;
 use Quraba\Backup\Retention\RetentionExecutor;
 use Quraba\Backup\Retention\RetentionInventory;
@@ -95,6 +115,7 @@ use Quraba\Backup\Storage\ObjectStorageFactory;
 use Quraba\Backup\Storage\RemoteLayout;
 use Quraba\Backup\Storage\RemoteStorage;
 use Quraba\Backup\Support\ConfigValue;
+use Quraba\Backup\Support\LocalCatalog;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\Process\ProcessFactory;
 use Quraba\Backup\Support\Process\SymfonyProcessFactory;
@@ -194,6 +215,10 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             ResticCheckCommand::class,
             ResticPruneCommand::class,
             RestoreCommand::class,
+            RestoreReconcileCommand::class,
+            BootstrapEnvCommand::class,
+            CatalogRebuildCommand::class,
+            RecoveryChecklistCommand::class,
             RunCommand::class,
             ListCommand::class,
             ReconcileCommand::class,
@@ -279,7 +304,37 @@ final class QurabaBackupServiceProvider extends ServiceProvider
         $this->app->singleton(ResticReconstructor::class);
         $this->app->singleton(RestorePreflight::class);
         $this->app->singleton(RestoreDatabaseValidator::class);
+        $this->app->singleton(RestorePreparation::class);
         $this->app->singleton(RestoreDryRunService::class);
+        $this->app->singleton(LocalCatalog::class);
+
+        // Live restore. The observer is replaceable (progress reporting,
+        // failure injection in tests); everything else is fixed.
+        $this->app->singletonIf(RestoreStepObserver::class, NullRestoreStepObserver::class);
+        $this->app->singleton(RestoreJournalStore::class, fn (Application $app): RestoreJournalStore => new RestoreJournalStore($app->make(PackagePaths::class)));
+        $this->app->singleton(DatabaseReplacement::class, ExactDatabaseReplacement::class);
+        $this->app->singleton(MediaStaging::class, fn (Application $app): MediaStaging => new MediaStaging($app->publicPath()));
+        $this->app->singleton(ExactDirectoryReplacement::class);
+        $this->app->singleton(CleanHostProof::class);
+        $this->app->singleton(SafetyBackupService::class);
+        $this->app->singleton(SafetyBackupInspector::class);
+        $this->app->singleton(LiveRestoreService::class);
+        $this->app->singleton(RestoreReconciler::class);
+
+        // Clean-host recovery.
+        $this->app->singleton(CatalogRebuilder::class);
+        $this->app->singleton(RecoveryChecklist::class);
+        $this->app->singleton(EnvBootstrapper::class, fn (Application $app): EnvBootstrapper => new EnvBootstrapper(
+            $app->make(Repository::class),
+            $app->make(OperationCoordinator::class),
+            $app->make(IdentityResolver::class),
+            $app->make(RemoteManifestCatalog::class),
+            $app->make(RetentionTombstoneStore::class),
+            $app->make(ArchiveStore::class),
+            $app->make(ArchiveVerifier::class),
+            $app->make(WorkspaceManager::class),
+            $app->publicPath(),
+        ));
 
         $this->app->singleton(ArchiveEngine::class, fn (Application $app): SpatieArchiveEngine => new SpatieArchiveEngine(
             $app,
@@ -324,7 +379,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
 
         $this->app->singleton(BackupScheduler::class);
 
-        $this->app->when([BackupManager::class, BackupReconciler::class, BackupScheduler::class, RetentionExecutor::class])
+        $this->app->when([BackupManager::class, BackupReconciler::class, BackupScheduler::class, RetentionExecutor::class, LiveRestoreService::class, RestoreReconciler::class, CatalogRebuilder::class])
             ->needs(LoggerInterface::class)
             ->give(fn (Application $app): LoggerInterface => self::logger($app));
     }

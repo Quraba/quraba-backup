@@ -16,6 +16,12 @@ use Throwable;
  * components of a run. Remote manifests are immutable, so a clean host
  * reads these to avoid presenting an expired backup as available.
  *
+ * Records are written PER COMPONENT, each one as soon as that component's
+ * absence is proven, so a retention pass that removes the archive and then
+ * fails to forget the snapshot still tells the truth remotely. The object
+ * returned by the store is the union of a run's component records (and of
+ * a legacy combined tombstone written by older releases).
+ *
  * Only non-secret facts: schema version, run/app/environment identity, the
  * expired component names, the time and the maintenance run that proved the
  * deletion.
@@ -122,6 +128,24 @@ final readonly class RetentionTombstone
     public function covers(string $component): bool
     {
         return in_array($component, $this->components, true);
+    }
+
+    /**
+     * The union of two records of the same run, application and environment.
+     *
+     * @throws InvalidArgumentException when they describe different runs or applications
+     */
+    public function merge(self $other): self
+    {
+        if ($this->runUuid !== $other->runUuid || $this->appId !== $other->appId || $this->environment !== $other->environment) {
+            throw new InvalidArgumentException('expiry records of one run name different runs, applications or environments');
+        }
+
+        $components = array_values(array_unique([...$this->components, ...$other->components]));
+        sort($components);
+        $newest = $other->expiredAt->greaterThan($this->expiredAt) ? $other : $this;
+
+        return new self($this->runUuid, $this->appId, $this->environment, $components, $newest->expiredAt, $newest->maintenanceRunUuid);
     }
 
     public function encode(): string

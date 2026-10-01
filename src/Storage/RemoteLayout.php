@@ -17,7 +17,9 @@ use Quraba\Backup\Restic\RepositoryLocation;
  *
  *   {prefix}/{app_id}/archives/YYYY/MM/DD/{run_uuid}/application.zip
  *   {prefix}/{app_id}/manifests/YYYY/MM/DD/{run_uuid}.json
- *   {prefix}/{app_id}/retention/{run_uuid}.json   ← retention tombstones
+ *   {prefix}/{app_id}/retention/{run_uuid}/{component}.json  ← one immutable
+ *       expiry record per physically removed component
+ *   {prefix}/{app_id}/retention/{run_uuid}.json   ← legacy combined tombstone (read only)
  *   {prefix}/{app_id}/{restic}/...          ← owned exclusively by Restic
  *
  * Dates come from the run's immutable UTC request time, so every retry of a
@@ -85,9 +87,26 @@ final readonly class RemoteLayout
         return $this->applicationRoot().self::RETENTION.'/';
     }
 
+    /**
+     * The legacy combined tombstone of a run. Still read (older releases
+     * wrote it); new expiries are recorded per component.
+     */
     public function tombstone(string $runUuid): string
     {
         return $this->retentionRoot().Identifiers::assertUuid($runUuid, 'The run UUID').'.json';
+    }
+
+    /**
+     * The immutable expiry record of ONE component of a run
+     * (`application_archive` or `media_snapshot`).
+     */
+    public function componentTombstone(string $runUuid, string $component): string
+    {
+        if (preg_match('/^[a-z][a-z_]{0,40}$/', $component) !== 1) {
+            throw new ConfigurationException('Invalid retention component name.');
+        }
+
+        return $this->retentionRoot().Identifiers::assertUuid($runUuid, 'The run UUID').'/'.$component.'.json';
     }
 
     /**

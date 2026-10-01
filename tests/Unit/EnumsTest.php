@@ -37,9 +37,9 @@ final class EnumsTest extends TestCase
         yield 'ConsistencyLevel' => [ConsistencyLevel::class, ['none', 'best_effort', 'quiesced']];
         yield 'RestoreMode' => [RestoreMode::class, ['dry_run', 'restore']];
         yield 'RestoreProfile' => [RestoreProfile::class, ['database', 'media', 'full']];
-        yield 'RestoreStatus' => [RestoreStatus::class, ['pending', 'resolving', 'reconstructing', 'validating', 'safety_backup', 'quiescing', 'applying', 'verifying', 'completed', 'failed', 'indeterminate']];
+        yield 'RestoreStatus' => [RestoreStatus::class, ['pending', 'resolving', 'reconstructing', 'validating', 'safety_backup', 'quiescing', 'applying', 'verifying', 'completed', 'failed', 'indeterminate', 'abandoned']];
         yield 'HealthState' => [HealthState::class, ['healthy', 'degraded', 'failed', 'unknown']];
-        yield 'MaintenanceOperation' => [MaintenanceOperation::class, ['reconciliation', 'retention', 'restic_check', 'restic_prune']];
+        yield 'MaintenanceOperation' => [MaintenanceOperation::class, ['reconciliation', 'retention', 'restic_check', 'restic_prune', 'catalog_rebuild']];
     }
 
     /**

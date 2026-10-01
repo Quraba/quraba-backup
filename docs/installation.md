@@ -1,7 +1,9 @@
 # Installation
 
-> This release creates verified backups (application archives, media snapshots, Recovery Points) and
-> schedules them. Restore and retention are not implemented yet.
+> This release creates and schedules verified backups (application archives, media snapshots, Recovery
+> Points), reports recovery health, applies exact retention and restores one exact run — see
+> [restore](restore.md) and [disaster recovery](disaster-recovery.md). Once backups work, run
+> `php artisan quraba:backup:recovery-checklist` and store every listed value outside this server.
 
 ## 1. Require the package
 

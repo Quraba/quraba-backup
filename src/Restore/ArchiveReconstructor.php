@@ -16,7 +16,16 @@ use Quraba\Backup\Workspace\OperationWorkspace;
 use Quraba\Backup\Workspace\WorkspaceArea;
 use ZipArchive;
 
-/** Downloads, verifies and extracts only known entries into a private workspace. */
+/**
+ * Downloads and verifies the exact archive, then extracts ONLY the SQL dump
+ * into the private workspace (hashing it on the way, so it can be re-proven
+ * immediately before a live import).
+ *
+ * The archived `.env` is verified as part of the archive but never
+ * extracted here: a restore does not need its content, so no plaintext copy
+ * of the application's secrets is ever written by a restore. Recovering
+ * `.env` on a clean host is the separate, explicit `bootstrap-env` command.
+ */
 final readonly class ArchiveReconstructor
 {
     public function __construct(
@@ -26,7 +35,7 @@ final readonly class ArchiveReconstructor
         private Repository $config,
     ) {}
 
-    /** @return array{archive_verified: true, archive_sha256: string, archive_bytes: int, database_dump: string, database_dump_bytes: int|false, env_candidate: ?string, metadata: array<string, mixed>, app_key_compatibility: string, release_compatibility: string} */
+    /** @return array{archive_verified: true, archive_sha256: string, archive_bytes: int, database_dump: string, database_dump_bytes: int|false, database_dump_sha256: string, includes_env: bool, metadata: array<string, mixed>, app_key_compatibility: string, release_compatibility: string} */
     public function reconstruct(RestoreSource $source, ApplicationIdentity $identity, OperationWorkspace $workspace): array
     {
         if ($source->archiveLocator === null || $source->archiveSha256 === null) {
@@ -69,8 +78,7 @@ final readonly class ArchiveReconstructor
         }
 
         try {
-            $dump = $this->copyEntry($zip, SpatieArchiveEngine::DATABASE_ENTRY, $workspace->path(WorkspaceArea::Restore, 'database.sql'));
-            $env = $includesEnv ? $this->copyEntry($zip, SpatieArchiveEngine::ENV_ENTRY, $workspace->path(WorkspaceArea::Restore, 'env.candidate')) : null;
+            [$dump, $dumpSha256] = $this->copyEntry($zip, SpatieArchiveEngine::DATABASE_ENTRY, $workspace->path(WorkspaceArea::Restore, 'database.sql'));
         } finally {
             $zip->close();
         }
@@ -90,14 +98,18 @@ final readonly class ArchiveReconstructor
             'archive_bytes' => $verified->bytes,
             'database_dump' => $dump,
             'database_dump_bytes' => filesize($dump),
-            'env_candidate' => $env,
+            'database_dump_sha256' => $dumpSha256,
+            'includes_env' => $includesEnv,
             'metadata' => $verified->metadata,
             'app_key_compatibility' => $appKeyCompatibility,
             'release_compatibility' => $releaseCompatibility,
         ];
     }
 
-    private function copyEntry(ZipArchive $zip, string $entry, string $destination): string
+    /**
+     * @return array{0: string, 1: string} the private file and its SHA-256
+     */
+    private function copyEntry(ZipArchive $zip, string $entry, string $destination): array
     {
         $source = $zip->getStreamName($entry);
         if ($source === false) {
@@ -105,18 +117,20 @@ final readonly class ArchiveReconstructor
         }
 
         $target = PrivateFile::create($destination);
+        $hash = hash_init('sha256');
         try {
             while (! feof($source)) {
                 $chunk = fread($source, 1048576);
                 if ($chunk === false || ($chunk !== '' && fwrite($target, $chunk) !== strlen($chunk))) {
                     throw RestoreFailed::reconstructionFailed('an archive entry could not be copied into the private workspace');
                 }
+                hash_update($hash, $chunk);
             }
         } finally {
             fclose($source);
             fclose($target);
         }
 
-        return $destination;
+        return [$destination, hash_final($hash)];
     }
 }

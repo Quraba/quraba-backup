@@ -73,11 +73,18 @@ final readonly class RestorePreflight
         $atomic = null;
         if ($profile !== RestoreProfile::Database) {
             $atomic = true;
-            foreach ($this->roots->resolve() as $root) {
-                if (! $this->probeRename(dirname($root->path))) {
-                    $atomic = false;
-                    break;
+            $snapshotRoots = array_column($source->mediaRoots, 'name');
+            try {
+                // Destinations need not exist yet (clean host); their parent must.
+                foreach ($this->roots->destinations() as $destination) {
+                    if (in_array($destination->name, $snapshotRoots, true) && ! $this->probeRename(dirname($destination->path))) {
+                        $atomic = false;
+                        break;
+                    }
                 }
+            } catch (Throwable) {
+                $atomic = false;
+                $blockers[] = 'The configured media destinations are not valid.';
             }
             if (! $atomic) {
                 if ((bool) $this->config->get('quraba-backup.restore.require_atomic_media_swap', true)) {

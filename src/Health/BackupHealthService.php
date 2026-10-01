@@ -31,6 +31,9 @@ use Quraba\Backup\Restic\RepositoryState;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\SnapshotIdentity;
 use Quraba\Backup\Restic\SnapshotKind;
+use Quraba\Backup\Restore\Journal\RestoreJournal;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
+use Quraba\Backup\Restore\Live\SafetyBackupInspector;
 use Quraba\Backup\Retention\RetentionExecutor;
 use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Workspace\WorkspaceManager;
@@ -60,6 +63,8 @@ final readonly class BackupHealthService
         private WorkspaceManager $workspaces,
         private OperationCoordinator $coordinator,
         private SecretRedactor $redactor,
+        private RestoreJournalStore $journals,
+        private SafetyBackupInspector $safetyBackups,
     ) {}
 
     public function check(bool $sample = true): HealthReport
@@ -72,6 +77,9 @@ final readonly class BackupHealthService
         } catch (Throwable $exception) {
             return new HealthReport([
                 CheckResult::fail('health.catalog', 'Backup catalog', 'The identity or the catalog is unavailable: '.$this->redactor->redact($exception->getMessage()), [], HealthState::Unknown),
+                // Restore journals live outside the database: an interrupted
+                // restore that emptied it is exactly what must be reported.
+                $this->liveRestoreCheck($now, false),
             ], $now);
         }
 
@@ -104,6 +112,7 @@ final readonly class BackupHealthService
             $this->retentionCheck($now),
             $this->resticCheckFreshness($now, $snapshot !== null),
             $this->restoreCheck($now),
+            $this->liveRestoreCheck($now, $sample),
         ], $now);
     }
 
@@ -442,7 +451,7 @@ final readonly class BackupHealthService
 
     private function restoreCheck(CarbonImmutable $now): CheckResult
     {
-        $unresolved = RestoreRun::query()->whereNotIn('status', [RestoreStatus::Completed->value, RestoreStatus::Failed->value])->get();
+        $unresolved = RestoreRun::query()->whereNotIn('status', array_map(static fn (RestoreStatus $status): string => $status->value, RestoreStatus::settled()))->get();
         $live = $unresolved->filter(static fn (RestoreRun $r): bool => $r->mode === RestoreMode::Restore);
 
         if ($live->isNotEmpty()) {
@@ -467,6 +476,88 @@ final readonly class BackupHealthService
 
         // Failed dry runs are diagnostics about a backup source, not damage.
         return CheckResult::pass('health.restores', 'Restores', $recentFailedDryRuns === 0 ? 'No unresolved restores.' : sprintf('No unresolved restores (%d recent dry run(s) failed; diagnostic only — see quraba:backup:restore output).', $recentFailedDryRuns), $details);
+    }
+
+    /**
+     * Live restores, judged from the external restore journals (the
+     * authority — the catalog rows above are only their mirror):
+     *
+     *  - unresolved AFTER the destructive boundary → the application state is
+     *    UNKNOWN;
+     *  - a destructive restore whose safety backup is not present remotely →
+     *    FAILED (UNKNOWN when remote storage cannot be asked);
+     *  - unresolved BEFORE the boundary → degraded: nothing was changed, but
+     *    it blocks further restores and may have left maintenance mode on.
+     */
+    private function liveRestoreCheck(CarbonImmutable $now, bool $sample): CheckResult
+    {
+        try {
+            $all = $this->journals->all();
+        } catch (Throwable $exception) {
+            return CheckResult::fail('health.live_restores', 'Live restores', 'The restore journals cannot be read: '.$this->redactor->redact($exception->getMessage()), [], HealthState::Unknown);
+        }
+
+        if ($all['unreadable'] !== []) {
+            return CheckResult::fail('health.live_restores', 'Live restores', sprintf('%d restore journal(s) cannot be read; they may describe a restore that changed the application.', count($all['unreadable'])), ['unreadable' => $all['unreadable']], HealthState::Unknown);
+        }
+
+        $after = array_values(array_filter($all['journals'], static fn (RestoreJournal $j): bool => $j->isUnresolved() && $j->crossedDestructiveBoundary()));
+        $before = array_values(array_filter($all['journals'], static fn (RestoreJournal $j): bool => $j->isUnresolved() && ! $j->crossedDestructiveBoundary()));
+
+        if ($after !== []) {
+            return CheckResult::fail('health.live_restores', 'Live restores', sprintf('%d live restore(s) stopped AFTER the destructive boundary; the application state is UNKNOWN. Run "php artisan quraba:backup:restore-reconcile".', count($after)), ['restores' => self::journalSummaries($after)], HealthState::Unknown);
+        }
+
+        $days = $this->positiveInteger('quraba-backup.retention.safety_days', 30);
+        $unknown = [];
+
+        foreach ($all['journals'] as $journal) {
+            $settled = $journal->settledAt();
+            $relevant = $journal->crossedDestructiveBoundary() && $journal->safetyRequired() && ($settled === null || $settled->addDays($days)->greaterThan($now));
+
+            if (! $relevant) {
+                continue;
+            }
+
+            $safety = $journal->safetyRunUuid();
+
+            if ($safety === null) {
+                return CheckResult::fail('health.live_restores', 'Live restores', sprintf('Restore %s changed the application but its journal names no safety backup.', $journal->restoreUuid()), ['restore' => $journal->summary()], HealthState::Failed);
+            }
+
+            if (! $sample) {
+                continue;
+            }
+
+            $state = $this->safetyBackups->inspect($safety, $this->identities->current());
+
+            if ($state['state'] === 'missing') {
+                return CheckResult::fail('health.live_restores', 'Live restores', sprintf('The safety backup %s of destructive restore %s is missing remotely: %s.', $safety, $journal->restoreUuid(), $state['detail']), ['restore' => $journal->summary()], HealthState::Failed);
+            }
+
+            if ($state['state'] === 'unknown') {
+                $unknown[] = $journal->restoreUuid();
+            }
+        }
+
+        if ($unknown !== []) {
+            return CheckResult::fail('health.live_restores', 'Live restores', 'The safety backup of a destructive restore could not be observed remotely.', ['restores' => $unknown], HealthState::Unknown);
+        }
+
+        if ($before !== []) {
+            return CheckResult::warn('health.live_restores', 'Live restores', sprintf('%d live restore(s) were interrupted before changing anything; reconcile them (the application may still be in maintenance mode).', count($before)), ['restores' => self::journalSummaries($before)]);
+        }
+
+        return CheckResult::pass('health.live_restores', 'Live restores', sprintf('No unresolved live restore (%d journal(s)).', count($all['journals'])));
+    }
+
+    /**
+     * @param  list<RestoreJournal>  $journals
+     * @return list<array<string, mixed>>
+     */
+    private static function journalSummaries(array $journals): array
+    {
+        return array_map(static fn (RestoreJournal $journal): array => $journal->summary(), $journals);
     }
 
     private function lastCompleted(MaintenanceOperation $operation, bool $executedOnly): ?BackupMaintenanceRun

@@ -37,6 +37,11 @@ final readonly class LaravelMaintenanceProvider implements QuiescenceProvider
         return 'laravel_maintenance';
     }
 
+    public function claimsQuiescence(): bool
+    {
+        return $this->noBackgroundWriters;
+    }
+
     public function enter(): QuiescenceSession
     {
         $wasDown = $this->isDown();
@@ -74,6 +79,7 @@ final readonly class LaravelMaintenanceProvider implements QuiescenceProvider
                 }
             },
             fn (): bool => $this->isDown(),
+            ! $wasDown,
         );
     }
 

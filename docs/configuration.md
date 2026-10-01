@@ -84,6 +84,8 @@ The application connection (`QURABA_BACKUP_DB_CONNECTION`, default: the default 
 (`mariadb-dump`, then `mysqldump`, preferring `mysqldump` for Oracle MySQL servers) or set with
 `QURABA_BACKUP_DB_DUMP_BINARY`. `QURABA_BACKUP_DB_DUMP_TIMEOUT` (seconds, default 3600) bounds the dump;
 `QURABA_BACKUP_DB_DUMP_ROUTINES=false` skips stored routines if the database user lacks the privilege.
+`QURABA_BACKUP_DB_DUMP_EVENTS=true` also dumps scheduled events (the account needs the `EVENT` privilege);
+without it a live restore, which replaces the database exactly, removes events without bringing them back.
 
 For restore preparation, `QURABA_BACKUP_RESTORE_DB_VALIDATION` selects `artifact` (default), `schema`, or
 `scratch_import`. The last level needs `QURABA_BACKUP_SCRATCH_CONNECTION`, a dedicated, empty database
@@ -93,6 +95,20 @@ needs schema creation and deletion rights there; do not use a root or globally p
 package fingerprints the import and removes imported tables, views, routines and events. The production user does not need
 `CREATE DATABASE`. When granting access to a scratch database whose name contains underscores, escape each
 underscore as `\_` in the database-level `GRANT` scope; otherwise the grant can cover other database names.
+
+## Live restore
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `restore.confirmation_phrase` | `RESTORE_APPLICATION` | The exact phrase `--confirm=` must carry (at least 8 characters). |
+| `QURABA_BACKUP_RESTORE_AUTO_UP` | `false` | Leave maintenance mode after a completed restore. Keep it off: verify first. |
+| `QURABA_BACKUP_RESTORE_REWRITE_DEFINERS` | `false` | Create views, triggers and routines as the restoring account when the dump names another one. |
+| `QURABA_BACKUP_DB_IMPORT_TIMEOUT` | `7200` | Seconds the database client may take to import the dump. |
+| `retention.safety_days` | `30` | How long the safety backup of a settled restore is kept. |
+| `restic.media.roots.{name}.staging` | none | A private directory on the root's filesystem, used when the package workspace is on another one. |
+
+A live restore also needs `QURABA_BACKUP_QUIESCENCE_PROVIDER=laravel_maintenance` together with
+`QURABA_BACKUP_NO_BACKGROUND_WRITERS=true`. See [restore](restore.md).
 See [Recovery operations](recovery-operations.md).
 
 `QURABA_BACKUP_RELEASE_ID` identifies an application release in new encrypted archive metadata (hashed,

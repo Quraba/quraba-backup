@@ -10,4 +10,5 @@ enum MaintenanceOperation: string
     case Retention = 'retention';
     case ResticCheck = 'restic_check';
     case ResticPrune = 'restic_prune';
+    case CatalogRebuild = 'catalog_rebuild';
 }

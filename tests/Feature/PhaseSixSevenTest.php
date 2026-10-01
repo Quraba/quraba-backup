@@ -166,7 +166,8 @@ final class PhaseSixSevenTest extends TestCase
 
         $exit = Artisan::call('quraba:backup:restore', ['--run' => $backup->uuid, '--force' => true, '--json' => true]);
         self::assertSame(1, $exit);
-        self::assertStringContainsString('restore.live_not_implemented', Artisan::output());
+        // --force alone is never a live restore: both gates are required.
+        self::assertStringContainsString('restore.confirmation_required', Artisan::output());
     }
 
     public function test_local_remote_source_disagreement_and_app_key_mismatch_block_dry_run(): void
@@ -344,8 +345,10 @@ final class PhaseSixSevenTest extends TestCase
         self::assertSame(ArtifactStatus::Expired, $oldArchive->status);
         self::assertFileDoesNotExist($this->bucketPath((string) $oldArchive->locator));
         self::assertFileExists($this->bucketPath((string) $new->artifacts()->where('kind', 'application_archive')->value('locator')));
-        $tombstone = $this->app->make(RemoteStorage::class)->layout()->tombstone($old->uuid);
-        self::assertFileExists($this->bucketPath($tombstone));
+        $layout = $this->app->make(RemoteStorage::class)->layout();
+        self::assertFileExists($this->bucketPath($layout->componentTombstone($old->uuid, 'application_archive')));
+        self::assertFileDoesNotExist($this->bucketPath($layout->componentTombstone($old->uuid, 'media_snapshot')));
+        self::assertFileDoesNotExist($this->bucketPath($layout->tombstone($old->uuid)), 'The legacy combined tombstone is no longer written.');
 
         $discoverExit = Artisan::call('quraba:backup:discover', ['--remote' => true, '--json' => true]);
         $discovered = json_decode(Artisan::output(), true);
@@ -402,22 +405,116 @@ final class PhaseSixSevenTest extends TestCase
         self::assertSame(MaintenanceStatus::Indeterminate, BackupMaintenanceRun::query()->latest('id')->firstOrFail()->status);
     }
 
-    public function test_existing_tombstone_conflict_is_refused_without_overwrite(): void
+    public function test_existing_expiry_record_conflict_is_refused_without_overwrite(): void
     {
         $old = $this->manager()->run(BackupProfile::Database)->run;
         $this->manager()->run(BackupProfile::Database);
         $this->keepOneOfEachFamily();
         self::assertSame(0, Artisan::call('quraba:backup:retention', ['--execute' => true, '--json' => true]), Artisan::output());
-        $path = $this->bucketPath($this->app->make(RemoteStorage::class)->layout()->tombstone($old->uuid));
+        $identity = $this->app->make(IdentityResolver::class)->current();
+        $store = $this->app->make(RetentionTombstoneStore::class);
+        $path = $this->bucketPath($this->app->make(RemoteStorage::class)->layout()->componentTombstone($old->uuid, 'application_archive'));
         $original = (string) file_get_contents($path);
-        $conflict = RetentionTombstone::make($old->uuid, $this->app->make(IdentityResolver::class)->current(), ['media_snapshot'], CarbonImmutable::now('UTC'), $old->uuid);
+
+        // An identical expiry is adopted (idempotent retry), never rewritten.
+        $store->put(RetentionTombstone::make($old->uuid, $identity, ['application_archive'], CarbonImmutable::now('UTC')->addHour(), $old->uuid));
+        self::assertSame($original, file_get_contents($path));
+
+        // A document claiming something else at that path is a collision.
+        $foreign = RetentionTombstone::make($old->uuid, $identity, ['media_snapshot'], CarbonImmutable::now('UTC'), $old->uuid);
+        file_put_contents($path, $foreign->encode());
 
         try {
-            $this->app->make(RetentionTombstoneStore::class)->put($conflict);
-            self::fail('A conflicting tombstone was adopted.');
-        } catch (RetentionFailed) {
-            self::assertSame($original, file_get_contents($path));
+            $store->put(RetentionTombstone::make($old->uuid, $identity, ['application_archive'], CarbonImmutable::now('UTC'), $old->uuid));
+            self::fail('A conflicting expiry record was adopted.');
+        } catch (RetentionFailed $exception) {
+            self::assertSame('retention.tombstone_collision', $exception->failureCode());
+            self::assertSame($foreign->encode(), file_get_contents($path));
         }
+
+        // A record whose content contradicts its path never counts as an expiry.
+        self::assertSame([], $store->all($identity)['tombstones']);
+        self::assertCount(1, $store->all($identity)['malformed']);
+
+        // Combined records are refused: one record, one component.
+        $this->expectException(RetentionFailed::class);
+        $store->put(RetentionTombstone::make($old->uuid, $identity, ['application_archive', 'media_snapshot'], CarbonImmutable::now('UTC'), $old->uuid));
+    }
+
+    public function test_archive_deleted_then_forget_fails_is_immediately_remote_truth_and_later_completed(): void
+    {
+        $old = $this->manager()->run(BackupProfile::Recovery)->run;
+        $this->manager()->run(BackupProfile::Recovery);
+        $this->keepOneOfEachFamily();
+        $layout = $this->app->make(RemoteStorage::class)->layout();
+        $archive = $old->artifacts()->where('kind', 'application_archive')->firstOrFail();
+        $snapshot = $old->artifacts()->where('kind', 'restic_snapshot')->firstOrFail();
+
+        // archive deleted → Restic forget fails.
+        $this->writeScenario(['repository' => 'ready', 'commands' => ['forget' => ['exit' => 1, 'stderr' => 'injected forget failure']]]);
+        $exit = Artisan::call('quraba:backup:retention', ['--execute' => true, '--json' => true]);
+        $report = json_decode(Artisan::output(), true);
+        self::assertSame(1, $exit);
+        self::assertSame('indeterminate', $report['status']);
+        self::assertSame('retention.deletion_unproven', $report['failure']['code']);
+
+        // Physical truth and remote truth agree, per component, right now.
+        self::assertFileDoesNotExist($this->bucketPath((string) $archive->locator));
+        self::assertFileExists($this->bucketPath($layout->componentTombstone($old->uuid, 'application_archive')));
+        self::assertFileDoesNotExist($this->bucketPath($layout->componentTombstone($old->uuid, 'media_snapshot')));
+        self::assertSame(ArtifactStatus::Expired, $archive->refresh()->status);
+        self::assertSame(ArtifactStatus::Verified, $snapshot->refresh()->status, 'A snapshot that is still present is never marked expired.');
+
+        self::assertSame(0, Artisan::call('quraba:backup:discover', ['--remote' => true, '--json' => true]));
+        $row = array_values(array_filter(json_decode(Artisan::output(), true)['runs'], static fn (array $r): bool => $r['run_uuid'] === $old->uuid))[0];
+        self::assertFalse($row['archive_available']);
+        self::assertTrue($row['snapshot_available']);
+        self::assertFalse($row['complete_recovery_point']);
+        self::assertSame(['application_archive'], $row['expired_components']);
+
+        // Restore source resolution consumes the component record at once.
+        self::assertSame('restore.source_expired', $this->restore($old->uuid, 'full')['error']['code']);
+        self::assertSame('restore.source_expired', $this->restore($old->uuid, 'database')['error']['code']);
+
+        // Reconciliation settles what is proven and keeps the rest open.
+        self::assertSame(1, Artisan::call('quraba:backup:reconcile', ['--json' => true]));
+        $reconciled = json_decode(Artisan::output(), true);
+        $intent = array_values(array_filter($reconciled['maintenance'], static fn (array $item): bool => $item['type'] === 'retention_intent'))[0];
+        self::assertSame('partially_settled', $intent['outcome']);
+        self::assertSame(['media_snapshot'], $intent['present']);
+        self::assertIsArray($old->refresh()->metadata['retention_pending']);
+
+        // Once Restic works again a later pass completes the partial retention.
+        $this->writeScenario(['repository' => 'ready']);
+        self::assertSame(0, Artisan::call('quraba:backup:retention', ['--execute' => true, '--json' => true]), Artisan::output());
+        self::assertSame(ArtifactStatus::Expired, $snapshot->refresh()->status);
+        self::assertFileExists($this->bucketPath($layout->componentTombstone($old->uuid, 'media_snapshot')));
+        self::assertNull($old->refresh()->metadata['retention_pending'] ?? null);
+        self::assertSame(['application_archive', 'media_snapshot'], $old->metadata['retention']['components']);
+
+        self::assertSame(0, Artisan::call('quraba:backup:discover', ['--remote' => true, '--json' => true]));
+        $row = array_values(array_filter(json_decode(Artisan::output(), true)['runs'], static fn (array $r): bool => $r['run_uuid'] === $old->uuid))[0];
+        self::assertSame(['application_archive', 'media_snapshot'], $row['expired_components']);
+        self::assertSame(0, Artisan::call('quraba:backup:reconcile', ['--json' => true]), Artisan::output());
+    }
+
+    public function test_legacy_combined_tombstones_remain_readable_and_are_unioned(): void
+    {
+        $run = $this->manager()->run(BackupProfile::Recovery)->run;
+        $identity = $this->app->make(IdentityResolver::class)->current();
+        $layout = $this->app->make(RemoteStorage::class)->layout();
+        $legacy = RetentionTombstone::make($run->uuid, $identity, ['application_archive'], CarbonImmutable::now('UTC'), $run->uuid);
+        @mkdir(dirname($this->bucketPath($layout->tombstone($run->uuid))), 0700, true);
+        file_put_contents($this->bucketPath($layout->tombstone($run->uuid)), $legacy->encode());
+        $store = $this->app->make(RetentionTombstoneStore::class);
+
+        self::assertSame(['application_archive'], $store->find($run->uuid)?->components);
+        self::assertSame('restore.source_expired', $this->restore($run->uuid, 'database')['error']['code']);
+
+        $store->put(RetentionTombstone::make($run->uuid, $identity, ['media_snapshot'], CarbonImmutable::now('UTC'), $run->uuid));
+        self::assertSame(['application_archive', 'media_snapshot'], $store->find($run->uuid)?->components);
+        self::assertSame(['application_archive', 'media_snapshot'], $store->all($identity)['tombstones'][$run->uuid]->components);
+        self::assertSame([], $store->all($identity)['malformed']);
     }
 
     public function test_interrupted_check_is_closed_and_actual_prune_remains_indeterminate(): void
@@ -487,7 +584,7 @@ final class PhaseSixSevenTest extends TestCase
         $reconcileExit = Artisan::call('quraba:backup:reconcile', ['--json' => true]);
         self::assertSame(0, $reconcileExit, Artisan::output());
         self::assertSame(ArtifactStatus::Expired, $archive->refresh()->status);
-        self::assertFileExists($this->bucketPath($this->app->make(RemoteStorage::class)->layout()->tombstone($old->uuid)));
+        self::assertFileExists($this->bucketPath($this->app->make(RemoteStorage::class)->layout()->componentTombstone($old->uuid, 'application_archive')));
     }
 
     public function test_catalog_write_failure_after_delete_remains_reconcilable(): void
@@ -503,7 +600,7 @@ final class PhaseSixSevenTest extends TestCase
             $report = json_decode(Artisan::output(), true);
             self::assertSame(1, $exit);
             self::assertSame('indeterminate', $report['status']);
-            self::assertFileExists($this->bucketPath($this->app->make(RemoteStorage::class)->layout()->tombstone($old->uuid)));
+            self::assertFileExists($this->bucketPath($this->app->make(RemoteStorage::class)->layout()->componentTombstone($old->uuid, 'application_archive')));
         } finally {
             $database->statement('DROP TRIGGER block_expiry');
         }

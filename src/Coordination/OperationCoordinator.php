@@ -58,6 +58,17 @@ final readonly class OperationCoordinator
         return new HeldLocks([$this->locks->acquire(LockName::Restore, $purpose)]);
     }
 
+    /**
+     * LIVE restore: the global write lock AND the restore lock, held through
+     * the whole destructive lifecycle. No backup, retention, check, prune,
+     * reconciliation, dry run or other restore can overlap it; read-only
+     * health needs no lock and keeps working.
+     */
+    public function beginLiveRestore(string $purpose): HeldLocks
+    {
+        return $this->beginWriteOperation($purpose, LockName::Restore);
+    }
+
     public function isRestorePreparationRunning(): bool
     {
         return $this->locks->isHeldElsewhere(LockName::Restore);

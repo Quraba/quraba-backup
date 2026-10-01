@@ -42,6 +42,8 @@ final class ArgvMySqlDumper extends MySql
 
     private bool $oracleClient8 = false;
 
+    private bool $includeEvents = false;
+
     public static function using(ProcessFactory $processes, string $binary, string $versionLine, string $credentialsDirectory, int $timeoutSeconds): self
     {
         if ($timeoutSeconds <= 0) {
@@ -57,6 +59,16 @@ final class ArgvMySqlDumper extends MySql
         $dumper->oracleClient8 = $dumper->oracleClient && preg_match('/\bVer 8\.|\b8\.\d+\.\d+/', $versionLine) === 1;
 
         return $dumper;
+    }
+
+    /**
+     * Also dump scheduled events (needs the EVENT privilege on the database).
+     */
+    public function withEvents(bool $include = true): self
+    {
+        $this->includeEvents = $include;
+
+        return $this;
     }
 
     public function dumpToFile(string $dumpFile): void
@@ -108,6 +120,10 @@ final class ArgvMySqlDumper extends MySql
 
         if ($this->includeRoutines) {
             $arguments[] = '--routines';
+        }
+
+        if ($this->includeEvents) {
+            $arguments[] = '--events';
         }
 
         if ($this->defaultCharacterSet !== '' && preg_match('/^[A-Za-z0-9_]+$/', $this->defaultCharacterSet) === 1) {

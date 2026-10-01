@@ -4,32 +4,34 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Restore;
 
-use Illuminate\Contracts\Config\Repository;
 use Quraba\Backup\Coordination\OperationCoordinator;
 use Quraba\Backup\Domain\FailureDetails;
 use Quraba\Backup\Enums\RestoreMode;
 use Quraba\Backup\Enums\RestoreProfile;
+use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Exceptions\RestoreFailed;
-use Quraba\Backup\Identity\IdentityResolver;
 use Quraba\Backup\Models\RestoreRun;
 use Quraba\Backup\Security\SecretRedactor;
+use Quraba\Backup\Support\LocalCatalog;
 use Quraba\Backup\Workspace\WorkspaceManager;
 use Throwable;
 
-/** Strictly non-destructive restore preparation; no live apply API exists. */
+/**
+ * Strictly non-destructive restore preparation. This service has no way to
+ * change the live application: it depends on none of the live restore
+ * services, and it holds only the restore lock.
+ *
+ * On a clean host (no catalog tables yet) the dry run still works from the
+ * remote manifest; it then simply has no audit row to write.
+ */
 final readonly class RestoreDryRunService
 {
     public function __construct(
-        private Repository $config,
         private OperationCoordinator $coordinator,
-        private IdentityResolver $identities,
-        private RestoreSourceResolver $sources,
-        private RestorePreflight $preflight,
-        private ArchiveReconstructor $archives,
-        private ResticReconstructor $media,
-        private RestoreDatabaseValidator $database,
+        private RestorePreparation $preparation,
         private WorkspaceManager $workspaces,
         private SecretRedactor $redactor,
+        private LocalCatalog $catalog,
     ) {}
 
     /** @return array<string, mixed> */
@@ -56,70 +58,45 @@ final readonly class RestoreDryRunService
             'required_disk_bytes' => null,
             'free_disk_bytes' => null,
             'atomic_rename' => null,
+            'scratch_contaminated' => null,
             'warnings' => [],
             'blockers' => [],
             'notice' => 'Nothing was changed in the live application.',
         ];
 
         try {
-            $audit = RestoreRun::request(RestoreMode::DryRun, $profile, $runUuid);
-            $result['restore_run_uuid'] = $audit->uuid;
-            $audit->markResolving();
-            $identity = $this->identities->current();
-            $source = $this->sources->resolve($runUuid, $profile);
-            $result['source'] = $source->origin;
-            $result['consistency'] = $source->consistency;
-            $result['repository_id'] = $source->repositoryId;
-            $result['snapshot_id'] = $source->snapshotId;
-            $audit->freezeSource($source->archiveLocator, $source->archiveSha256, $source->snapshotId);
-            $audit->mergeMetadata(['source' => $source->identities(), 'origin' => $source->origin, 'manifest_schema' => $source->manifestSchema]);
+            if ($this->catalog->has('quraba_restore_runs')) {
+                $audit = RestoreRun::request(RestoreMode::DryRun, $profile, $runUuid);
+                $result['restore_run_uuid'] = $audit->uuid;
+                $audit->markResolving();
+            } else {
+                $result['restore_run_uuid'] = null;
+                $result['warnings'][] = 'No local backup catalog exists on this host, so this dry run is not recorded in an audit table.';
+            }
 
             $workspace = $this->workspaces->create();
-            $preflight = $this->preflight->check($source, $profile, $workspace);
-            $result['required_disk_bytes'] = $preflight['required_bytes'];
-            $result['free_disk_bytes'] = $preflight['free_bytes'];
-            $result['atomic_rename'] = $preflight['atomic_rename'];
-            $result['warnings'] = $preflight['warnings'];
-            if ($preflight['blockers'] !== []) {
-                $result['blockers'] = $preflight['blockers'];
-                throw RestoreFailed::reconstructionFailed('preflight found blockers');
-            }
 
-            $audit->markReconstructing();
-            $archive = null;
-            if ($profile !== RestoreProfile::Media) {
-                $archive = $this->archives->reconstruct($source, $identity, $workspace);
-                $result['archive_verified'] = $archive['archive_verified'];
-                $result['archive_sha256'] = $archive['archive_sha256'];
-                $result['app_key_compatibility'] = $archive['app_key_compatibility'];
-                $result['release_compatibility'] = $archive['release_compatibility'];
-                if ($archive['release_compatibility'] === 'warning') {
-                    $result['warnings'][] = 'The backup release fingerprint differs from this installation; review compatibility before a future live restore.';
+            $prepared = $this->preparation->prepare($runUuid, $profile, $workspace, $result, static function (string $stage, ?RestoreSource $source) use ($audit, $profile): void {
+                if ($audit === null) {
+                    return;
                 }
-                if ($archive['app_key_compatibility'] === 'mismatch') {
-                    $result['blockers'][] = 'The backup APP_KEY fingerprint differs from the current application.';
+
+                if ($stage === 'resolved' && $source !== null) {
+                    $audit->freezeSource(
+                        $profile === RestoreProfile::Media ? null : $source->archiveLocator,
+                        $profile === RestoreProfile::Media ? null : $source->archiveSha256,
+                        $profile === RestoreProfile::Database ? null : $source->snapshotId,
+                    );
+                    $audit->mergeMetadata(['source' => $source->identities(), 'origin' => $source->origin, 'manifest_schema' => $source->manifestSchema]);
+                } elseif ($stage === 'reconstructing') {
+                    $audit->markReconstructing();
+                } elseif ($stage === 'validating') {
+                    $audit->markValidating();
                 }
-            }
+            });
 
-            if ($profile !== RestoreProfile::Database) {
-                $mappings = $this->media->reconstruct($source, $identity, $workspace);
-                $result['media_roots'] = array_map(static fn (MediaRootMapping $mapping): array => $mapping->toArray(), $mappings);
-            }
-
-            $audit->markValidating();
-            if ($archive !== null) {
-                $setting = $this->config->get('quraba-backup.restore.db_validation_level', 'artifact');
-                $level = is_string($setting) ? DbValidationLevel::tryFrom($setting) : null;
-                if ($level === null) {
-                    throw RestoreFailed::reconstructionFailed('invalid restore DB validation level');
-                }
-                $validation = $this->database->validate($archive['database_dump'], $archive['metadata'], $level, $workspace);
-                $result['db_validation_level'] = $validation['level'];
-                $result['database_validation'] = $validation;
-            }
-
-            if ($result['blockers'] !== []) {
-                throw RestoreFailed::reconstructionFailed('validation found blockers');
+            if ($prepared->validation !== null && $prepared->validation['scratch_schema_fingerprint'] !== null) {
+                $result['scratch_contaminated'] = false;
             }
 
             $cleanup = $workspace->cleanup();
@@ -128,23 +105,30 @@ final readonly class RestoreDryRunService
                 throw RestoreFailed::reconstructionFailed('private workspace cleanup failed');
             }
 
-            $audit->mergeMetadata(['validation' => $result['database_validation'] ?? null, 'warnings' => $result['warnings']]);
-            $audit->markCompleted();
+            $audit?->mergeMetadata(['validation' => $prepared->validation, 'warnings' => $result['warnings']]);
+            $audit?->markCompleted();
             $result['ok'] = true;
         } catch (Throwable $exception) {
             $failure = FailureDetails::fromThrowable($exception, 'restore.dry_run', $this->redactor);
             $result['error'] = $failure->toArray();
+            if ($exception instanceof QurabaBackupException && $exception->failureCode() === 'restore.scratch_cleanup_failed') {
+                // The scratch database — never the live one — was left dirty.
+                $result['scratch_contaminated'] = true;
+            }
             if ($result['blockers'] === []) {
                 $result['blockers'][] = $failure->message;
             }
             if ($audit !== null && ! $audit->status->isTerminal()) {
+                if ($result['scratch_contaminated'] === true) {
+                    $audit->mergeMetadata(['scratch_contaminated' => true]);
+                }
                 $audit->markFailed($failure);
             }
         } finally {
             if ($workspace !== null) {
                 $cleanup = $workspace->cleanup();
                 if (! $cleanup->succeeded()) {
-                    $result['blockers'][] = 'Private workspace cleanup failed; inspect abandoned workspaces.';
+                    $result['blockers'] = [...(is_array($result['blockers']) ? array_values($result['blockers']) : []), 'Private workspace cleanup failed; inspect abandoned workspaces.'];
                     $result['ok'] = false;
                 }
             }

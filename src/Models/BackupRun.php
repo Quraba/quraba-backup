@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 use Quraba\Backup\Domain\FailureDetails;
+use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Enums\ArtifactKind;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
@@ -71,6 +72,59 @@ final class BackupRun extends PackageModel
         $run->save();
 
         return $run;
+    }
+
+    /**
+     * Recreates the catalog row of a run that is only known from its
+     * immutable remote manifest (catalog rebuild). The run keeps its UUID and
+     * its original request time and starts in VERIFYING: its artifacts are
+     * added from PHYSICAL evidence, then {@see self::finalizeAdoption()}
+     * decides the terminal state. Nothing is trusted from the manifest alone.
+     *
+     * @param  array<string, mixed>  $metadata
+     */
+    public static function adopt(
+        string $uuid,
+        BackupProfile $profile,
+        BackupTrigger $trigger,
+        ConsistencyLevel $consistency,
+        CarbonImmutable $requestedAt,
+        array $metadata,
+    ): self {
+        $run = new self;
+        $run->setAttribute('uuid', Identifiers::assertUuid($uuid, 'The run UUID'));
+        $run->setAttribute('profile', $profile);
+        $run->setAttribute('trigger', $trigger);
+        $run->setAttribute('consistency', $consistency);
+        $run->setAttribute('requested_at', $requestedAt->utc());
+        $run->setAttribute('started_at', $requestedAt->utc());
+        $run->setAttribute('metadata', app(SecretRedactor::class)->redactArray($metadata));
+        $run->initializeStatus(BackupStatus::Verifying);
+        $run->save();
+
+        return $run;
+    }
+
+    /**
+     * Terminal state of an adopted run. The completion time is the best
+     * known one: the run's own request time, not the time of the rebuild.
+     */
+    public function finalizeAdoption(BackupStatus $status, ?FailureDetails $componentFailure = null): self
+    {
+        if (! is_array($this->metadata['catalog_rebuilt'] ?? null)) {
+            throw new IllegalStateTransition('Only a run adopted by a catalog rebuild can be finalized this way.');
+        }
+
+        match ($status) {
+            BackupStatus::Completed => $this->markCompleted(),
+            BackupStatus::Partial => $this->markPartial($componentFailure ?? throw new InvalidArgumentException('A partial adoption requires the failure of the missing component.')),
+            default => throw new IllegalStateTransition('An adopted run is completed or partial.'),
+        };
+
+        $this->setAttribute('completed_at', $this->requested_at);
+        $this->save();
+
+        return $this;
     }
 
     /**
@@ -252,6 +306,16 @@ final class BackupRun extends PackageModel
         $this->save();
 
         return $this;
+    }
+
+    /**
+     * The pin of a pre-change safety backup while its restore is unresolved:
+     * far enough in the future that it cannot expire by itself. It is
+     * replaced by the configured safety window once the restore is settled.
+     */
+    public static function safetyPinHorizon(): CarbonImmutable
+    {
+        return CarbonImmutable::create(9999, 12, 31, 0, 0, 0, 'UTC') ?? CarbonImmutable::now('UTC')->addYears(1000);
     }
 
     public function unpin(): self

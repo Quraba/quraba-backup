@@ -39,10 +39,16 @@ use Throwable;
  *
  *   revalidate protections → record the intent on the run (catalog)
  *   → delete the EXACT archive object → prove it absent
+ *     → write the archive's immutable remote expiry record → mark it EXPIRED
  *   → confirm the EXACT full snapshot ID is this run's → `restic forget ID`
  *     → prove it absent from a tag-filtered listing
- *   → write the immutable remote tombstone
- *   → only then mark the artifacts EXPIRED.
+ *     → write the snapshot's immutable remote expiry record → mark it EXPIRED
+ *   → close the intent.
+ *
+ * Remote truth is per component: the moment ONE component is proven absent
+ * its expiry record is written, even if removing the next component then
+ * fails. The immutable manifest can therefore never keep advertising a
+ * deleted archive just because the snapshot could not be forgotten.
  *
  * Nothing is ever selected by prefix, by "latest" or by Restic keep-policies;
  * nothing is marked expired before its absence is proven; prune is never run.
@@ -88,6 +94,11 @@ final readonly class RetentionExecutor
         $locks = $execute ? $this->coordinator->beginWriteOperation('retention', LockName::Maintenance) : null;
 
         try {
+            // No backup is deleted while the application state is unknown.
+            if ($execute && ($blocked = $this->inventory->blockedByRestore()) !== null) {
+                throw new RetentionFailed('Destructive retention is refused: '.$blocked.'. Reconcile it first (php artisan quraba:backup:restore-reconcile).', 'retention.restore_unresolved');
+            }
+
             return $this->perform($identity, $execute);
         } finally {
             $locks?->release();
@@ -95,11 +106,12 @@ final readonly class RetentionExecutor
     }
 
     /**
-     * Settles a run whose retention stopped midway (reconciliation): when
-     * every component named by its intent record is physically absent, the
-     * tombstone is written and the artifacts are marked expired. When any
-     * component is still present nothing changes (a later retention pass
-     * repeats the deletion); nothing is ever recreated.
+     * Settles a run whose retention stopped midway (reconciliation). Every
+     * component named by its intent record that is physically absent gets
+     * its remote expiry record and is marked expired — independently of the
+     * other component. A component that is still present is left alone (a
+     * later retention pass repeats the deletion); nothing is ever recreated.
+     * The intent is closed once no named component remains present.
      *
      * @return array<string, mixed> evidence
      */
@@ -111,29 +123,41 @@ final readonly class RetentionExecutor
             return ['run_uuid' => $run->uuid, 'outcome' => 'nothing_pending'];
         }
 
+        $components = array_values(array_filter(is_array($pending['components'] ?? null) ? $pending['components'] : [], is_string(...)));
         $archive = is_string($pending['archive_locator'] ?? null) ? $pending['archive_locator'] : null;
         $snapshot = is_string($pending['snapshot_id'] ?? null) ? $pending['snapshot_id'] : null;
+        $maintenanceUuid = is_string($pending['maintenance_run_uuid'] ?? null) ? $pending['maintenance_run_uuid'] : '';
+        $expiredAt = self::intentTime($pending);
         $present = [];
+        $settled = [];
 
-        if ($archive !== null && $this->remote->objects()->exists($this->remote->layout()->assertManaged($archive))) {
-            $present[] = 'application_archive';
+        if (in_array('application_archive', $components, true)) {
+            if ($archive !== null && $this->remote->objects()->exists($this->remote->layout()->assertManaged($archive))) {
+                $present[] = 'application_archive';
+            } else {
+                $this->settleComponent($run, $identity, 'application_archive', $maintenanceUuid, $expiredAt);
+                $settled[] = 'application_archive';
+            }
         }
 
-        if ($snapshot !== null && in_array($snapshot, $this->applicationSnapshotIds($identity), true)) {
-            $present[] = 'media_snapshot';
-        }
-
-        if ($snapshot !== null && $this->repository->snapshots([], [$snapshot]) !== []) {
-            $present[] = 'media_snapshot';
+        if (in_array('media_snapshot', $components, true)) {
+            // Absence is only proven by the application listing; an exact ID
+            // that still resolves (e.g. with changed tags) is "present".
+            if ($snapshot !== null && (in_array($snapshot, $this->applicationSnapshotIds($identity), true) || $this->repository->snapshots([], [$snapshot]) !== [])) {
+                $present[] = 'media_snapshot';
+            } else {
+                $this->settleComponent($run, $identity, 'media_snapshot', $maintenanceUuid, $expiredAt);
+                $settled[] = 'media_snapshot';
+            }
         }
 
         if ($present !== []) {
-            return ['run_uuid' => $run->uuid, 'outcome' => 'still_present', 'present' => $present];
+            return ['run_uuid' => $run->uuid, 'outcome' => $settled === [] ? 'still_present' : 'partially_settled', 'present' => $present, 'components' => $settled];
         }
 
-        $this->settle($run, $identity, is_string($pending['maintenance_run_uuid'] ?? null) ? $pending['maintenance_run_uuid'] : '');
+        $run->refresh()->mergeMetadata(['retention_pending' => null]);
 
-        return ['run_uuid' => $run->uuid, 'outcome' => 'settled', 'components' => $pending['components'] ?? []];
+        return ['run_uuid' => $run->uuid, 'outcome' => 'settled', 'components' => $settled];
     }
 
     private function perform(ApplicationIdentity $identity, bool $execute): RetentionReport
@@ -216,34 +240,40 @@ final readonly class RetentionExecutor
         $this->revalidate($run, $candidate);
 
         // Intent before any deletion: an interruption can be settled later.
+        $expiredAt = CarbonImmutable::now('UTC');
         $run->mergeMetadata(['retention_pending' => [
             'maintenance_run_uuid' => $maintenanceUuid,
             'components' => $candidate->components(),
             'archive_locator' => $candidate->archiveLocator,
             'snapshot_id' => $candidate->snapshotId,
-            'expired_at' => CarbonImmutable::now('UTC')->toIso8601ZuluString(),
+            'expired_at' => $expiredAt->toIso8601ZuluString(),
         ]]);
 
         $uncertain = true;
+        $records = [];
 
+        // Each component becomes remote truth as soon as ITS absence is
+        // proven; a later failure cannot leave it claimed by the manifest.
         if ($candidate->archiveLocator !== null) {
             $this->deleteArchive($candidate->archiveLocator, $run->uuid);
+            $records[] = $this->settleComponent($run, $identity, 'application_archive', $maintenanceUuid, $expiredAt);
         }
 
         if ($candidate->snapshotId !== null) {
             $this->forgetSnapshot($candidate, $identity);
+            $records[] = $this->settleComponent($run, $identity, 'media_snapshot', $maintenanceUuid, $expiredAt);
         }
 
-        $tombstone = $this->settle($run->refresh(), $identity, $maintenanceUuid);
+        $run->refresh()->mergeMetadata(['retention_pending' => null]);
         $uncertain = false;
 
         return [
             'run_uuid' => $run->uuid,
             'family' => $candidate->family,
-            'components' => $tombstone->components,
+            'components' => $candidate->components(),
             'archive_locator' => $candidate->archiveLocator,
             'snapshot_id' => $candidate->snapshotId,
-            'tombstone' => $this->remote->layout()->tombstone($run->uuid),
+            'expiry_records' => $records,
         ];
     }
 
@@ -262,7 +292,7 @@ final readonly class RetentionExecutor
             throw RetentionFailed::protectionChanged(sprintf('run %s changed since planning', $run->uuid));
         }
 
-        if ($run->isPinned() || $run->trigger->value === 'pre_restore' || isset($this->inventory->externalProtections()[$run->uuid])) {
+        if ($run->isPinned() || isset($this->inventory->externalProtections()[$run->uuid])) {
             throw RetentionFailed::protectionChanged(sprintf('run %s is protected now', $run->uuid));
         }
     }
@@ -321,45 +351,53 @@ final readonly class RetentionExecutor
     }
 
     /**
-     * Tombstone first (remote truth for clean hosts), then the catalog.
+     * One component whose absence is PROVEN: the immutable remote expiry
+     * record first (remote truth for clean hosts), then the catalog.
+     * Idempotent: an identical record is adopted, an expired artifact stays
+     * expired.
+     *
+     * @return string the remote path of the expiry record
      */
-    private function settle(BackupRun $run, ApplicationIdentity $identity, string $maintenanceUuid): RetentionTombstone
+    private function settleComponent(BackupRun $run, ApplicationIdentity $identity, string $component, string $maintenanceUuid, CarbonImmutable $expiredAt): string
     {
-        $pending = is_array($run->metadata['retention_pending'] ?? null) ? $run->metadata['retention_pending'] : [];
-        $components = array_values(array_filter(is_array($pending['components'] ?? null) ? $pending['components'] : [], is_string(...)));
-
-        try {
-            $expiredAt = CarbonImmutable::parse(is_string($pending['expired_at'] ?? null) ? $pending['expired_at'] : 'now')->utc();
-        } catch (Throwable) {
-            $expiredAt = CarbonImmutable::now('UTC');
-        }
-
-        $tombstone = $this->tombstones->put(RetentionTombstone::make($run->uuid, $identity, $components, $expiredAt, $maintenanceUuid !== '' ? $maintenanceUuid : (string) Str::uuid7()));
+        $record = $this->tombstones->put(RetentionTombstone::make($run->uuid, $identity, [$component], $expiredAt, $maintenanceUuid !== '' ? $maintenanceUuid : (string) Str::uuid7()));
+        $kind = $component === 'application_archive' ? ArtifactKind::ApplicationArchive : ArtifactKind::ResticSnapshot;
 
         /** @var BackupArtifact $artifact */
-        foreach ($run->artifacts()->get() as $artifact) {
-            $component = match ($artifact->kind) {
-                ArtifactKind::ApplicationArchive => 'application_archive',
-                ArtifactKind::ResticSnapshot => 'media_snapshot',
-                ArtifactKind::RemoteManifest => null,
-            };
-
-            if ($component !== null && $tombstone->covers($component) && $artifact->status === ArtifactStatus::Verified) {
+        foreach ($run->artifacts()->where('kind', $kind->value)->get() as $artifact) {
+            if ($artifact->status === ArtifactStatus::Verified) {
                 $artifact->markExpired();
             }
         }
 
-        $run->mergeMetadata([
-            'retention' => [
-                'expired_at' => $tombstone->expiredAt->toIso8601ZuluString(),
-                'components' => $tombstone->components,
-                'maintenance_run_uuid' => $tombstone->maintenanceRunUuid,
-                'tombstone' => $this->remote->layout()->tombstone($run->uuid),
-            ],
-            'retention_pending' => null,
-        ]);
+        $path = $this->remote->layout()->componentTombstone($run->uuid, $component);
+        $run->refresh();
+        $recorded = is_array($run->metadata['retention'] ?? null) ? $run->metadata['retention'] : [];
+        $components = array_values(array_unique([...array_filter(is_array($recorded['components'] ?? null) ? $recorded['components'] : [], is_string(...)), $component]));
+        sort($components);
+        $records = array_values(array_unique([...array_filter(is_array($recorded['expiry_records'] ?? null) ? $recorded['expiry_records'] : [], is_string(...)), $path]));
+        sort($records);
 
-        return $tombstone;
+        $run->mergeMetadata(['retention' => [
+            'expired_at' => $record->expiredAt->toIso8601ZuluString(),
+            'components' => $components,
+            'maintenance_run_uuid' => $record->maintenanceRunUuid,
+            'expiry_records' => $records,
+        ]]);
+
+        return $path;
+    }
+
+    /**
+     * @param  array<array-key, mixed>  $pending
+     */
+    private static function intentTime(array $pending): CarbonImmutable
+    {
+        try {
+            return CarbonImmutable::parse(is_string($pending['expired_at'] ?? null) ? $pending['expired_at'] : 'now')->utc();
+        } catch (Throwable) {
+            return CarbonImmutable::now('UTC');
+        }
     }
 
     /**
@@ -428,7 +466,8 @@ final readonly class RetentionExecutor
 
     /**
      * Completes an earlier decision: the artifact is already expired in the
-     * catalog (and tombstoned), but the object/snapshot is still present.
+     * catalog (and has its remote expiry record), but the object/snapshot is
+     * still present.
      *
      * @param  array<string, mixed>  $item
      * @return array<string, mixed>
@@ -443,7 +482,7 @@ final readonly class RetentionExecutor
         $component = $item['component'] ?? null;
         $tombstone = $this->tombstones->find($runUuid);
         if (! is_string($component) || $tombstone === null || ! $tombstone->covers($component)) {
-            throw new RetentionFailed('A lingering artifact has no matching immutable retention tombstone.', 'retention.lingering_refused');
+            throw new RetentionFailed('A lingering artifact has no matching immutable retention expiry record.', 'retention.lingering_refused');
         }
         $uncertain = true;
 

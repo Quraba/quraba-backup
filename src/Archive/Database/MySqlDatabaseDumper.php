@@ -127,6 +127,10 @@ final readonly class MySqlDatabaseDumper implements DatabaseDumper
             $dumper->includeRoutines();
         }
 
+        if ((bool) $this->config->get('quraba-backup.database.dump_events', false)) {
+            $dumper->withEvents();
+        }
+
         $path = $workspace->path(WorkspaceArea::Database, 'database.sql');
 
         try {

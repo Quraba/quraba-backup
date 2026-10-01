@@ -36,6 +36,14 @@ final readonly class RetentionCandidate
     }
 
     /**
+     * A pre-change safety backup of a live restore.
+     */
+    public function isSafetyBackup(): bool
+    {
+        return $this->trigger === 'pre_restore';
+    }
+
+    /**
      * Whether this run is a complete backup of its own family.
      */
     public function isComplete(): bool

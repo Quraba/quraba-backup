@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Tests\Integration;
 
+use Illuminate\Support\Facades\Artisan;
 use PHPUnit\Framework\Attributes\Group;
+use Quraba\Backup\Backup\BackupManager;
 use Quraba\Backup\Backup\MediaSnapshotService;
+use Quraba\Backup\Contracts\QuiescenceProvider;
 use Quraba\Backup\Enums\ArtifactKind;
 use Quraba\Backup\Enums\ArtifactStatus;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\BackupTrigger;
+use Quraba\Backup\Enums\ConsistencyLevel;
 use Quraba\Backup\Exceptions\RepositoryIdentityMismatch;
 use Quraba\Backup\Exceptions\ResticSnapshotFailed;
 use Quraba\Backup\Identity\IdentityResolver;
@@ -23,13 +27,18 @@ use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Restic\SnapshotIdentity;
 use Quraba\Backup\Restic\SnapshotKind;
+use Quraba\Backup\Restore\Journal\RestoreJournal;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
+use Quraba\Backup\Restore\Live\LiveRestoreService;
 use Quraba\Backup\Support\Process\ProcessFactory;
 use Quraba\Backup\Support\Process\SymfonyProcessFactory;
 use Quraba\Backup\Tests\Support\BuildsBackups;
+use Quraba\Backup\Tests\Support\RecordingQuiescenceProvider;
 use Quraba\Backup\Tests\Support\UsesFakeRestic;
 use Quraba\Backup\Tests\TestCase;
 use Quraba\Backup\Workspace\WorkspaceArea;
 use Quraba\Backup\Workspace\WorkspaceManager;
+use Symfony\Component\Console\Output\BufferedOutput;
 
 /**
  * Media snapshots against a REAL pinned Restic binary and a local repository.
@@ -165,27 +174,75 @@ final class RealResticMediaTest extends TestCase
 
         self::assertNotSame($old->snapshotId, $new->snapshotId);
 
-        if (PHP_OS_FAMILY === 'Windows') {
-            self::markTestIncomplete('Restic restores on Windows fail on NTFS ancestor timestamps; the restore half runs on Linux CI.');
-        }
-
+        // One root is restored on its own (the root directory and its content,
+        // none of its ancestors), which also works on Windows.
         $workspace = $this->app->make(WorkspaceManager::class)->create();
 
         try {
-            $this->app->make(ResticRunner::class)->restore($old->snapshotId, $workspace)->throwIfFailed();
+            $this->app->make(ResticRunner::class)->restoreRoot($old->snapshotId, $this->mediaRoot, $workspace, 'uploads')->throwIfFailed();
+            $restored = $workspace->area(WorkspaceArea::Restore).'/snapshot-'.substr($old->snapshotId, 0, 16).'/uploads/'.basename($this->mediaRoot);
 
-            $found = [];
-            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($workspace->area(WorkspaceArea::Restore), \FilesystemIterator::SKIP_DOTS));
-            foreach ($iterator as $file) {
-                if ($file->getFilename() === 'a.jpg') {
-                    $found[] = (string) file_get_contents($file->getPathname());
-                }
-            }
-
-            self::assertSame(['image-a'], $found);
+            self::assertSame('image-a', file_get_contents($restored.'/uploads/a.jpg'));
+            self::assertSame(['.', '..', basename($this->mediaRoot)], scandir(dirname($restored)), 'Exactly the root directory: no ancestor was restored.');
         } finally {
             $workspace->cleanup();
         }
+    }
+
+    public function test_live_media_restore_with_real_restic_replaces_the_root_exactly(): void
+    {
+        $this->app->instance(QuiescenceProvider::class, $provider = new RecordingQuiescenceProvider(ConsistencyLevel::Quiesced));
+        $this->app->forgetInstance(BackupManager::class);
+
+        // State A.
+        mkdir($this->mediaRoot.'/docs', 0700);
+        file_put_contents($this->mediaRoot.'/docs/readme.txt', 'doc-a');
+        if (PHP_OS_FAMILY !== 'Windows') {
+            chmod($this->mediaRoot, 0750);
+        }
+        $source = $this->manager()->run(BackupProfile::Media)->run;
+        self::assertSame(BackupStatus::Completed, $source->status);
+
+        // State B.
+        file_put_contents($this->mediaRoot.'/uploads/a.jpg', 'image-B-changed');
+        file_put_contents($this->mediaRoot.'/uploads/new-in-b.txt', 'b-only-file');
+        unlink($this->mediaRoot.'/docs/readme.txt');
+
+        // A dry run reconstructs with the real binary and changes nothing.
+        self::assertSame(0, Artisan::call('quraba:backup:restore', ['--run' => $source->uuid, '--profile' => 'media', '--json' => true]), Artisan::output());
+        self::assertSame('image-B-changed', file_get_contents($this->mediaRoot.'/uploads/a.jpg'));
+
+        $output = new BufferedOutput;
+        $exit = Artisan::call('quraba:backup:restore', ['--run' => $source->uuid, '--profile' => 'media', '--force' => true, '--confirm' => 'RESTORE_APPLICATION', '--json' => true], $output);
+        $report = json_decode($output->fetch(), true);
+        self::assertSame(0, $exit, (string) json_encode($report));
+        self::assertSame('completed', $report['status']);
+
+        // Media exactly A.
+        self::assertSame('image-a', file_get_contents($this->mediaRoot.'/uploads/a.jpg'));
+        self::assertSame('doc-a', file_get_contents($this->mediaRoot.'/docs/readme.txt'));
+        self::assertFileDoesNotExist($this->mediaRoot.'/uploads/new-in-b.txt');
+        if (PHP_OS_FAMILY !== 'Windows') {
+            self::assertSame(0750, fileperms($this->mediaRoot) & 0777, 'The root directory keeps the mode recorded in the snapshot.');
+        }
+
+        // The old tree is parked, complete; the safety snapshot holds state B.
+        $parked = glob(dirname($this->mediaRoot).'/.media.quraba-parked-*') ?: [];
+        self::assertCount(1, $parked);
+        self::assertSame('b-only-file', file_get_contents($parked[0].'/uploads/new-in-b.txt'));
+        $journal = $this->app->make(RestoreJournalStore::class)->find($report['restore_uuid']);
+        self::assertSame(RestoreJournal::TERMINAL_COMPLETED, $journal?->terminalState());
+        self::assertTrue($journal->safetyVerified());
+        self::assertSame(2, $this->snapshotCount(), 'The source snapshot and the safety snapshot; nothing was forgotten.');
+        self::assertTrue($provider->active, 'Quiescence is kept after the restore.');
+
+        // Restoring the safety snapshot brings state B back.
+        $output = new BufferedOutput;
+        $this->app->forgetInstance(LiveRestoreService::class);
+        self::assertSame(0, Artisan::call('quraba:backup:restore', ['--run' => $journal->safetyRunUuid(), '--profile' => 'media', '--force' => true, '--confirm' => 'RESTORE_APPLICATION', '--json' => true], $output), $output->fetch());
+        self::assertSame('image-B-changed', file_get_contents($this->mediaRoot.'/uploads/a.jpg'));
+        self::assertSame('b-only-file', file_get_contents($this->mediaRoot.'/uploads/new-in-b.txt'));
+        self::assertFileDoesNotExist($this->mediaRoot.'/docs/readme.txt');
     }
 
     public function test_full_recovery_point_with_real_restic(): void

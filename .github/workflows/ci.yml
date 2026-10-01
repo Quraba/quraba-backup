@@ -99,3 +99,15 @@ jobs:
 
       - name: Tests (no B2 credentials, no Redis, no sudo)
         run: vendor/bin/phpunit
+
+      # The destructive restore must be proven with the real tools on Linux:
+      # real Restic, the real dump and client binaries and the service
+      # database (state A → B → live restore of A, clean-host restore, real
+      # failures after the destructive boundary, scratch cleanup failure).
+      # A skipped test here would hide a missing prerequisite, so it fails.
+      - name: Real live restore and clean-host recovery (must not be skipped)
+        run: >-
+          vendor/bin/phpunit --fail-on-skipped --fail-on-incomplete
+          tests/Integration/RealLiveRestoreTest.php
+          tests/Integration/RealDatabaseArchiveTest.php
+          tests/Integration/RealResticMediaTest.php

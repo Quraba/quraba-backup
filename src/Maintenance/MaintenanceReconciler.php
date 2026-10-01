@@ -20,11 +20,12 @@ use Throwable;
  * backup reconciliation, which holds the global and maintenance locks, so
  * any maintenance run still pending or running was interrupted.
  *
- *  - Retention intents (`retention_pending` on a run): when every planned
- *    component is physically absent, the tombstone is written and the
- *    artifacts are marked expired; when something is still present nothing
- *    changes (a later retention pass deletes it). Deleted artifacts are
- *    never recreated.
+ *  - Retention intents (`retention_pending` on a run): every planned
+ *    component that is physically absent gets its immutable remote expiry
+ *    record and is marked expired, independently of the other component; a
+ *    component that is still present is left for a later retention pass.
+ *    The intent closes once nothing named by it remains present. Deleted
+ *    artifacts are never recreated.
  *  - Interrupted checks, dry prunes and reconciliation audits are closed as
  *    FAILED (`maintenance.interrupted`). An actual interrupted prune remains
  *    INDETERMINATE because its physical effect cannot be proved here.

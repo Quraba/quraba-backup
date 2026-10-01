@@ -20,6 +20,13 @@ interface QuiescenceProvider
     public function name(): string;
 
     /**
+     * Whether, as configured, {@see self::enter()} can yield a session that
+     * PROVES quiescence. A live restore refuses up front when this is false;
+     * it still requires the entered session itself to be `quiesced`.
+     */
+    public function claimsQuiescence(): bool;
+
+    /**
      * @throws QuiescenceFailed
      */
     public function enter(): QuiescenceSession;

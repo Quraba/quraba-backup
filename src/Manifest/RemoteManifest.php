@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
+use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Enums\ConsistencyLevel;
 use Quraba\Backup\Identity\ApplicationIdentity;
 use Throwable;
@@ -46,6 +47,7 @@ final readonly class RemoteManifest
         public ?string $snapshotId,
         public ?string $snapshotKind,
         public array $snapshotRoots,
+        public BackupTrigger $trigger = BackupTrigger::Manual,
     ) {}
 
     /**
@@ -159,6 +161,7 @@ final readonly class RemoteManifest
             $snapshotId,
             $snapshotKind,
             $roots,
+            BackupTrigger::tryFrom(is_string($data['trigger'] ?? null) ? $data['trigger'] : '') ?? BackupTrigger::Manual,
         );
     }
 
@@ -181,6 +184,7 @@ final readonly class RemoteManifest
             'run_uuid' => $this->runUuid,
             'environment' => $this->environment,
             'profile' => $this->profile->value,
+            'trigger' => $this->trigger->value,
             'status' => $this->status->value,
             'consistency' => $this->consistency->value,
             'recovery_point' => $this->recoveryPoint,

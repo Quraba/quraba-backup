@@ -9,6 +9,7 @@ use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Exceptions\ProcessExecutionFailed;
 use Quraba\Backup\Exceptions\ResticCommandFailed;
 use Quraba\Backup\Exceptions\ResticUnavailable;
+use Quraba\Backup\Restore\Live\MediaStagingArea;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\Process\ChildEnvironment;
 use Quraba\Backup\Support\Process\ProcessFactory;
@@ -206,6 +207,83 @@ final class ResticRunner
         }
 
         return $this->runRepository(ResticOperation::Restore, ['restore', $snapshotId, '--target', $target, '--json']);
+    }
+
+    /**
+     * Restores ONE media root of an exact snapshot into a private operation
+     * workspace: the root directory itself (with its own mode and times) and
+     * everything below it — none of its ancestors. The result is
+     * `{workspace}/restore/snapshot-…/{root name}/{root directory}`.
+     */
+    public function restoreRoot(string $snapshotId, string $snapshotPath, OperationWorkspace $workspace, string $rootName): ResticResult
+    {
+        self::assertRootName($rootName);
+
+        return $this->restoreRootInto($snapshotId, $snapshotPath, $workspace->directory(WorkspaceArea::Restore, 'snapshot-'.substr(Identifiers::assertFullSnapshotId($snapshotId), 0, 16).'/'.$rootName));
+    }
+
+    /**
+     * The same, into a private media staging area of a live restore. The
+     * area is created and proven private, empty and outside every live root
+     * by MediaStaging; live application paths are never a Restic target.
+     */
+    public function restoreRootToStaging(string $snapshotId, string $snapshotPath, MediaStagingArea $area, string $rootName): ResticResult
+    {
+        self::assertRootName($rootName);
+        $target = $area->target.'/'.$rootName;
+
+        if (is_link($area->target) || ! is_dir($area->target) || file_exists($target) || is_link($target) || ! @mkdir($target, 0700)) {
+            throw new ResticCommandFailed('The media staging target for a root could not be created fresh inside its staging area.');
+        }
+
+        return $this->restoreRootInto($snapshotId, $snapshotPath, $target);
+    }
+
+    /**
+     * The path of a snapshot root as Restic addresses it inside a snapshot:
+     * absolute, forward slashes, `C:/x` as `/C/x`.
+     */
+    public static function snapshotPath(string $path): string
+    {
+        $path = str_replace('\\', '/', $path);
+        $path = (string) preg_replace('~^([A-Za-z]):/~', '/$1/', $path);
+
+        if (! str_starts_with($path, '/') || str_contains($path, "\0") || str_contains($path.'/', '/../') || str_contains($path.'/', '/./') || str_contains($path, '//') || rtrim($path, '/') === '') {
+            throw new ResticCommandFailed('A snapshot root must be a clean absolute path.');
+        }
+
+        return rtrim($path, '/');
+    }
+
+    /**
+     * `restic restore ID:{parent} --include /{directory}`: Restic restores
+     * the subfolder `parent` of the snapshot, limited to the root directory,
+     * so no ancestor directory (and none of its metadata) is ever written.
+     */
+    private function restoreRootInto(string $snapshotId, string $snapshotPath, string $target): ResticResult
+    {
+        $snapshotId = Identifiers::assertFullSnapshotId($snapshotId);
+        $path = self::snapshotPath($snapshotPath);
+        $directory = basename($path);
+        $parent = substr($path, 0, -strlen($directory) - 1);
+
+        // Include patterns are globs: a root whose name is a pattern cannot be addressed exactly.
+        if ($directory === '' || strpbrk($directory, '*?[]\\!') !== false) {
+            throw new ResticCommandFailed('The media root directory name cannot be used as an exact restore pattern.');
+        }
+
+        if (is_link($target) || ! is_dir($target) || (@scandir($target) ?: []) !== ['.', '..']) {
+            throw new ResticCommandFailed('The restore target of a media root must be an existing, empty, real directory.');
+        }
+
+        return $this->runRepository(ResticOperation::Restore, ['restore', $parent === '' ? $snapshotId : $snapshotId.':'.$parent, '--target', $target, '--include', '/'.$directory, '--json']);
+    }
+
+    private static function assertRootName(string $rootName): void
+    {
+        if (preg_match('/^[a-z][a-z0-9_-]{0,31}$/', $rootName) !== 1) {
+            throw new ResticCommandFailed('Invalid media root name.');
+        }
     }
 
     public function check(bool $readData = false): ResticResult

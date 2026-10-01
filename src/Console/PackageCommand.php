@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Quraba\Backup\Console;
 
 use Illuminate\Console\Command;
+use Psr\Log\LoggerInterface;
 use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Health\CheckStatus;
 use Quraba\Backup\Health\HealthReport;
+use Quraba\Backup\QurabaBackupServiceProvider;
 use Quraba\Backup\Security\SecretRedactor;
 use Throwable;
 
@@ -20,6 +22,11 @@ abstract class PackageCommand extends Command
     protected function redactor(): SecretRedactor
     {
         return $this->laravel->make(SecretRedactor::class);
+    }
+
+    protected function packageLogger(): LoggerInterface
+    {
+        return $this->laravel->make(QurabaBackupServiceProvider::LOGGER);
     }
 
     protected function failWith(Throwable $exception): int
@@ -38,7 +45,7 @@ abstract class PackageCommand extends Command
 
     protected function wantsJson(): bool
     {
-        return $this->hasOption('json') && (bool) $this->option('json');
+        return $this->getDefinition()->hasOption('json') && $this->input->getOption('json') === true;
     }
 
     /**

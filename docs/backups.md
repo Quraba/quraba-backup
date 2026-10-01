@@ -1,8 +1,8 @@
 # Backups
 
-Quraba Backup creates **verified, non-destructive** backups of one Laravel application into the customer's
-own Backblaze B2 bucket. Restore and retention are **not implemented yet** (later phases); nothing in this
-release deletes or overwrites backup data.
+Quraba Backup creates verified backups of one Laravel application in the customer's B2 bucket.
+Health, explicit retention, repository maintenance, remote discovery and restore **dry runs** are available.
+Live restore is not implemented. See [Recovery operations](recovery-operations.md).
 
 ## Profiles
 
@@ -64,7 +64,7 @@ schema fingerprints, and a SHA-256 fingerprint of APP_KEY — never APP_KEY, pas
 3. The run's identity is searched: `quraba-backup, app:{uuid}, env:{env}, kind:{kind}, run:{uuid}` (a single
    comma-joined `--tag`, which Restic treats as AND). 0 → create; 1 → adopt; more than one → refused
    (`restic.snapshot_ambiguous`); a snapshot claiming the run with another app/env/kind is refused.
-4. The full snapshot ID from Restic's JSON summary is re-read by exact ID with the full identity filter, its
+4. The full snapshot ID from Restic's JSON summary is re-read by exact ID and its full identity is checked, its
    paths must equal the configured roots, and the repository ID is checked again. Only then is the artifact
    verified. Short IDs and `latest` are never used.
 

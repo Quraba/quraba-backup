@@ -85,6 +85,21 @@ final readonly class FlysystemObjectStorage implements ObjectStorage
         return $this->attempt('read', $path, fn (): string => $this->filesystem->read($path));
     }
 
+    public function delete(string $path): void
+    {
+        $path = $this->guard($path);
+
+        if ($path === '' || str_ends_with($path, '/') || str_contains($path, '*')) {
+            throw new ConfigurationException('Refusing to delete anything but one exact object key.');
+        }
+
+        $this->attempt('delete', $path, function () use ($path): bool {
+            $this->filesystem->delete($path);
+
+            return true;
+        });
+    }
+
     public function listFiles(string $prefix): array
     {
         $prefix = $this->guard(rtrim($prefix, '/'));

@@ -26,6 +26,7 @@ final class ArchitectureTest extends TestCase
         'Health/Doctor/Checks/LockingChecks.php',   // php -r cross-process flock probe
         'Archive/Database/ArgvMySqlDumper.php',     // mariadb-dump/mysqldump (argument array)
         'Archive/Database/MySqlDatabaseDumper.php', // passes the factory to the dumper
+        'Restore/RestoreDatabaseValidator.php',     // optional dedicated scratch DB import
         'Support/Process/ProcessFactory.php',
         'Support/Process/SymfonyProcessFactory.php',
         'QurabaBackupServiceProvider.php',
@@ -190,5 +191,27 @@ final class ArchitectureTest extends TestCase
 
         self::assertDoesNotMatchRegularExpression('/public function \w*(arbitrary|raw|command|execute)\w*\s*\(/i', $runner);
         self::assertMatchesRegularExpression('/private function execute\(/', $runner);
+    }
+
+    public function test_remote_delete_is_only_called_by_retention_and_restore_has_no_live_apply_path(): void
+    {
+        foreach (self::sources() as $path => $contents) {
+            if ($path !== 'Storage/FlysystemObjectStorage.php' && str_contains($contents, '->delete(')) {
+                self::assertSame('Retention/RetentionExecutor.php', $path, 'Remote deletion must remain inside retention.');
+            }
+            if (str_starts_with($path, 'Restore/')) {
+                foreach (['markApplying(', 'markDestructiveStarted(', 'markQuiescing(', 'markSafetyBackup('] as $liveAction) {
+                    self::assertStringNotContainsString($liveAction, $contents, 'Restore preparation must never cross into live execution.');
+                }
+            }
+        }
+
+        $runner = self::sources()['Restic/ResticRunner.php'];
+        self::assertStringContainsString('Identifiers::assertFullSnapshotId($snapshotId)', $runner);
+        self::assertStringContainsString('OperationWorkspace $workspace', $runner);
+        self::assertStringContainsString("'--target', \$target", $runner);
+        $scratch = self::sources()['Restore/RestoreDatabaseValidator.php'];
+        self::assertStringContainsString('SELECT DATABASE() AS db', $scratch);
+        self::assertStringContainsString('$productionDb === $scratchDb', $scratch);
     }
 }

@@ -8,8 +8,8 @@ use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Exceptions\ConfigurationException;
 
 /**
- * One validated profile schedule, expressed with Laravel's own frequency
- * methods (no custom cron language).
+ * One validated schedule (a backup profile or a maintenance task), expressed
+ * with Laravel's own frequency methods (no custom cron language).
  *
  * Times must fall on a 5-minute boundary: shared hosts such as cPanel /
  * Namecheap commonly run `schedule:run` only every 5 minutes, and an event is
@@ -19,8 +19,12 @@ final readonly class ScheduleDefinition
 {
     public const array FREQUENCIES = ['daily', 'weekly', 'monthly'];
 
+    /** Maintenance tasks that can be scheduled besides the backup profiles. */
+    public const array MAINTENANCE_TASKS = ['retention', 'restic_check'];
+
     private function __construct(
-        public BackupProfile $profile,
+        public string $task,
+        public ?BackupProfile $profile,
         public string $frequency,
         public string $time,
         public ?int $day,
@@ -29,13 +33,20 @@ final readonly class ScheduleDefinition
     /**
      * @param  array<array-key, mixed>|null  $settings
      */
-    public static function fromConfig(BackupProfile $profile, ?array $settings): ?self
+    public static function fromConfig(BackupProfile|string $task, ?array $settings): ?self
     {
+        $profile = $task instanceof BackupProfile ? $task : BackupProfile::tryFrom($task);
+        $task = $task instanceof BackupProfile ? $task->value : $task;
+
+        if ($profile === null && ! in_array($task, self::MAINTENANCE_TASKS, true)) {
+            throw new ConfigurationException(sprintf('Unknown scheduled task [%s].', $task));
+        }
+
         if ($settings === null || ! (bool) ($settings['enabled'] ?? false)) {
             return null;
         }
 
-        $key = 'quraba-backup.schedule.'.$profile->value;
+        $key = 'quraba-backup.schedule.'.$task;
         $frequency = $settings['frequency'] ?? 'daily';
         $time = $settings['time'] ?? '02:00';
         $day = $settings['day'] ?? null;
@@ -62,7 +73,7 @@ final readonly class ScheduleDefinition
             'monthly' => is_int($day) && $day >= 1 && $day <= 28 ? $day : throw new ConfigurationException(sprintf('[%s.day] must be 1 to 28 for monthly schedules.', $key)),
         };
 
-        return new self($profile, $frequency, $time, $day);
+        return new self($task, $profile, $frequency, $time, $day);
     }
 
     /**

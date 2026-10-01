@@ -7,6 +7,7 @@ namespace Quraba\Backup\Tests\Feature\Commands;
 use Illuminate\Support\Facades\Artisan;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\RepositoryIdentityRecord;
+use Quraba\Backup\Scheduling\BackupScheduler;
 use Quraba\Backup\Tests\Support\Sentinels;
 use Quraba\Backup\Tests\Support\UsesFakeRestic;
 use Quraba\Backup\Tests\TestCase;
@@ -225,7 +226,7 @@ final class ResticCommandsTest extends TestCase
         self::assertSame('pass', $statuses['backup.archive_storage']);
         self::assertSame('pass', $statuses['backup.manifest_storage']);
         self::assertSame('warn', $statuses['backup.repository_identity']);
-        self::assertSame('pass', $statuses['backup.schedule']);
+        self::assertSame(BackupScheduler::platformSupportsBackground() ? 'pass' : 'warn', $statuses['backup.schedule']);
 
         self::assertSame(0, BackupRun::query()->count(), 'The doctor never creates a backup.');
         self::assertSame(0, RepositoryIdentityRecord::query()->count(), 'The doctor never binds a repository identity.');

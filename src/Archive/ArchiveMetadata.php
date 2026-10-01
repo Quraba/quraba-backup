@@ -9,6 +9,8 @@ use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Database\DatabaseManager;
 use Quraba\Backup\Archive\Database\DatabaseDump;
+use Quraba\Backup\Database\DumpSchemaFingerprinter;
+use Quraba\Backup\Database\SchemaFingerprinter;
 use Throwable;
 
 /**
@@ -26,6 +28,7 @@ final readonly class ArchiveMetadata
         private Repository $config,
         private Application $app,
         private DatabaseManager $database,
+        private SchemaFingerprinter $schemas,
     ) {}
 
     /**
@@ -45,6 +48,7 @@ final readonly class ArchiveMetadata
             'package_version' => $request->packageVersion,
             'laravel_version' => $this->app->version(),
             'php_version' => PHP_VERSION,
+            'release_fingerprint' => $this->releaseFingerprint(),
             'database' => [
                 'connection' => $dump->connection,
                 'driver' => $dump->driver,
@@ -56,6 +60,7 @@ final readonly class ArchiveMetadata
                 'entry' => $databaseEntry,
                 'migration_fingerprint' => $this->migrationFingerprint($dump->connection),
                 'schema_fingerprint' => $this->schemaFingerprint($dump->connection),
+                'dump_schema_fingerprint' => DumpSchemaFingerprinter::fingerprint($dump->path),
             ],
             'app_key_fingerprint' => is_string($appKey) && $appKey !== '' ? 'sha256:'.hash('sha256', $appKey) : null,
             'contents' => array_values(array_filter([
@@ -81,6 +86,23 @@ final readonly class ArchiveMetadata
         return 'sha256:'.hash('sha256', implode("\n", array_map(self::scalar(...), $migrations)));
     }
 
+    public function releaseFingerprint(): ?string
+    {
+        $configured = $this->config->get('quraba-backup.archive.release_id');
+        if (is_string($configured) && trim($configured) !== '') {
+            return 'release:'.hash('sha256', trim($configured));
+        }
+
+        $lock = $this->app->basePath('composer.lock');
+        if (is_file($lock)) {
+            $hash = hash_file('sha256', $lock);
+
+            return $hash === false ? null : 'composer-lock:'.$hash;
+        }
+
+        return null;
+    }
+
     private static function scalar(mixed $value): string
     {
         return is_scalar($value) ? (string) $value : '';
@@ -89,15 +111,9 @@ final readonly class ArchiveMetadata
     private function schemaFingerprint(string $connection): ?string
     {
         try {
-            $rows = $this->database->connection($connection)->select(
-                'SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER BY TABLE_NAME, ORDINAL_POSITION'
-            );
+            return $this->schemas->fingerprint($connection);
         } catch (Throwable) {
             return null;
         }
-
-        $lines = array_map(static fn (mixed $row): string => implode('|', array_map(self::scalar(...), (array) $row)), $rows);
-
-        return 'sha256:'.hash('sha256', implode("\n", $lines));
     }
 }

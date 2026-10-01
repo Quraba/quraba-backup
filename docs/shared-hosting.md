@@ -27,8 +27,13 @@ Redis, queue worker or daemon.
 - Package locks are OS file locks. A process killed by the host (CloudLinux limits, OOM, SSH disconnect)
   releases its lock automatically; nothing needs manual unlocking.
 - Restic's own repository locks are never removed automatically. `quraba:backup:restic:health` reports them.
-- Scheduled backups run inside the `schedule:run` process (no queue worker). Long backups delay the host's
-  other scheduled tasks in that minute; pick quiet times. A backup killed by the host (CPU/time limits) is
+- On POSIX hosts, scheduled backups use Laravel's `runInBackground()` by default, so `schedule:run` can
+  continue other tasks. `QURABA_BACKUP_SCHEDULE_BACKGROUND=false` keeps foreground behavior; `true`
+  requires supported background execution. Windows development falls back in `auto` mode. Manual CLI
+  backups always run in the foreground. No queue worker, Supervisor or Redis is needed.
+- Scheduled backups pause during unrelated Laravel maintenance mode by default. Set
+  `QURABA_BACKUP_SCHEDULE_IN_MAINTENANCE=true` only when a deployment policy makes that safe.
+- A backup killed by the host (CPU/time limits) is
   resolved later by `php artisan quraba:backup:reconcile`, without duplicating anything already uploaded.
 - Database dumps stream to disk (`--quick --result-file`) and archives are hashed and uploaded as streams, so
   PHP memory does not grow with the backup size.

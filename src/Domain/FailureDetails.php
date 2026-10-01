@@ -55,6 +55,14 @@ final readonly class FailureDetails
         return self::make($code, $stage, $exception->getMessage(), $redactor);
     }
 
+    /**
+     * @return array{code: string, stage: string, message: string}
+     */
+    public function toArray(): array
+    {
+        return ['code' => $this->code, 'stage' => $this->stage, 'message' => $this->message];
+    }
+
     private static function assertIdentifier(string $value, string $label): void
     {
         if (strlen($value) > 64 || preg_match(self::IDENTIFIER_PATTERN, $value) !== 1) {

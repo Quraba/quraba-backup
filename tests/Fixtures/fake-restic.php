@@ -163,6 +163,39 @@ switch ($command) {
             $emit(0, json_encode($selected)."\n");
         }
 
+        if ($command === 'stats') {
+            $emit(0, json_encode(['total_size' => (int) ($scenario['restore_size'] ?? 1024), 'total_file_count' => 1])."\n");
+        }
+
+        if ($command === 'forget') {
+            $ids = $positional($args);
+            if ($ids === []) {
+                $emit(1, '', "no exact snapshot IDs supplied\n");
+            }
+            $stored = array_values(array_filter($stored, static fn (array $snapshot): bool => ! in_array($snapshot['id'], $ids, true)));
+            file_put_contents($snapshotsFile, json_encode($stored));
+            $emit(0, json_encode(['success' => true])."\n");
+        }
+
+        if ($command === 'restore') {
+            $id = $args[1] ?? '';
+            $target = $optionValues($args, '--target')[0] ?? null;
+            $matched = array_values(array_filter($allSnapshots, static fn (array $snapshot): bool => $snapshot['id'] === $id));
+            if (count($matched) !== 1 || ! is_string($target)) {
+                $emit(1, '', "unknown exact snapshot or target\n");
+            }
+            foreach ($matched[0]['paths'] as $root) {
+                $relative = ltrim(str_replace('\\', '/', $root), '/');
+                $relative = preg_replace('~^([A-Za-z]):/~', '$1/', $relative);
+                if (! is_string($relative) || str_contains($relative, '..')) {
+                    $emit(1, '', "unsafe path\n");
+                }
+                @mkdir($target.'/'.$relative, 0700, true);
+                file_put_contents($target.'/'.$relative.'/restored-fixture.txt', 'restored');
+            }
+            $emit(0, json_encode(['message_type' => 'summary', 'files_restored' => 1])."\n");
+        }
+
         match ($command) {
             'cat config' => $emit(0, json_encode(['version' => 2, 'id' => $repositoryId, 'chunker_polynomial' => '3da3358b4c2d4f'])."\n"),
             'list locks' => $emit(0, implode("\n", $scenario['locks'] ?? []).(($scenario['locks'] ?? []) === [] ? '' : "\n")),

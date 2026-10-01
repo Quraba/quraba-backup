@@ -9,6 +9,7 @@ use Quraba\Backup\Exceptions\StorageUnavailable;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Storage\RemoteStorage;
 use Quraba\Backup\Storage\StoredObject;
+use Quraba\Backup\Support\PrivateFile;
 
 /**
  * Stores verified application archives at their deterministic per-run path.
@@ -97,10 +98,11 @@ final readonly class ArchiveStore
     {
         $path = $this->remote->layout()->assertManaged($path);
         $source = $this->remote->objects()->readStream($path);
-        $target = @fopen($destination, 'xb');
-
-        if ($target === false) {
-            throw new ArchiveUploadFailed('Could not create the local download target.');
+        try {
+            $target = PrivateFile::create($destination);
+        } catch (\Throwable $exception) {
+            fclose($source);
+            throw $exception;
         }
 
         $hash = hash_init('sha256');
@@ -113,8 +115,15 @@ final readonly class ArchiveStore
                     throw new ArchiveUploadFailed(sprintf('Reading the remote archive [%s] failed.', $path));
                 }
 
+                if ($chunk === '' && ! feof($source)) {
+                    throw new ArchiveUploadFailed('The remote archive stream stopped before reaching EOF.');
+                }
+
                 hash_update($hash, $chunk);
-                fwrite($target, $chunk);
+
+                if ($chunk !== '' && fwrite($target, $chunk) !== strlen($chunk)) {
+                    throw new ArchiveUploadFailed('Writing the downloaded archive to the workspace failed (disk full?).');
+                }
             }
         } finally {
             fclose($source);
@@ -122,6 +131,24 @@ final readonly class ArchiveStore
         }
 
         return hash_final($hash);
+    }
+
+    /**
+     * Cheap physical sample for health: exact object present with the
+     * expected size. Never downloads. Storage errors propagate (unknown).
+     *
+     * @return 'present'|'missing'|'size_mismatch'
+     */
+    public function sample(string $locator, int $expectedBytes): string
+    {
+        $path = $this->remote->layout()->assertManaged($locator);
+        $objects = $this->remote->objects();
+
+        if (! $objects->exists($path)) {
+            return 'missing';
+        }
+
+        return $objects->size($path) === $expectedBytes ? 'present' : 'size_mismatch';
     }
 
     public function exists(BackupRun $run): bool

@@ -120,17 +120,28 @@ final class ResticRunner
     }
 
     /**
-     * Lists snapshots, optionally filtered.
+     * Lists snapshots, filtered EITHER by tags OR by exact IDs.
      *
      * Restic tag semantics: tags joined by commas inside ONE --tag flag must
      * ALL be present (AND); repeating --tag would mean OR. Identity filters
      * are therefore always passed as a single comma-joined --tag value.
+     *
+     * Restic ignores tag filters when explicit IDs are given ("Ignoring
+     * filters: explicit snapshot ids are given"), so combining them is
+     * refused here: callers must check the identity of an exact-ID result
+     * themselves. An unknown ID (or one Restic fails to load) is silently
+     * skipped with exit 0, so an empty exact-ID result is NOT proof of
+     * absence; absence is only ever proven from a tag-filtered listing.
      *
      * @param  list<string>  $tags  all tags must match
      * @param  list<string>  $snapshotIds  exact full snapshot IDs only
      */
     public function snapshots(array $tags = [], array $snapshotIds = []): ResticResult
     {
+        if ($tags !== [] && $snapshotIds !== []) {
+            throw new ResticCommandFailed('Restic ignores tag filters when explicit snapshot IDs are given; query by tags or by IDs, not both.');
+        }
+
         $arguments = ['snapshots', '--json', '--no-lock'];
 
         if ($tags !== []) {
@@ -206,10 +217,14 @@ final class ResticRunner
      * Forgets exact snapshots only. Policy-based `--keep-*` forgetting is
      * deliberately not exposed: retention computes exact IDs itself.
      *
-     * @param  non-empty-list<string>  $snapshotIds
+     * @param  list<string>  $snapshotIds  validated as non-empty at runtime
      */
     public function forget(array $snapshotIds): ResticResult
     {
+        if ($snapshotIds === []) {
+            throw new \InvalidArgumentException('Restic forget requires at least one exact snapshot ID.');
+        }
+
         $ids = array_map(Identifiers::assertFullSnapshotId(...), $snapshotIds);
 
         return $this->runRepository(ResticOperation::Forget, ['forget', '--json', '--', ...$ids]);

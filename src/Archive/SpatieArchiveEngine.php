@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Archive;
 
+use Illuminate\Container\Container as IlluminateContainer;
 use Illuminate\Contracts\Container\Container;
 use Quraba\Backup\Contracts\ArchiveEngine;
 use Quraba\Backup\Contracts\DatabaseDumper;
@@ -11,6 +12,7 @@ use Quraba\Backup\Exceptions\ArchiveCreationFailed;
 use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Workspace\WorkspaceArea;
+use ReflectionProperty;
 use Spatie\Backup\Config\Config as SpatieConfig;
 use Spatie\Backup\Enums\Encryption;
 use Spatie\Backup\Tasks\Backup\Zip;
@@ -23,10 +25,12 @@ use ZipArchive;
  * Spatie is used as the archive-building engine (its Zip task and AES
  * encryption), not as the orchestrator: no BackupJob, no Spatie destinations,
  * notifications, cleanup or commands. Spatie's Zip reads its settings from the
- * container's Spatie Config; a private Config instance holding only this
- * run's password is bound for the duration of the build and removed in a
- * finally block, so nothing leaks into the host application's own Spatie
- * configuration or into later operations.
+ * container's Spatie Config when it is constructed; a private Config holding
+ * only this run's password is bound just for that construction. Afterwards
+ * the host application's previously resolved Config instance is restored
+ * exactly (or, when there was none, only the temporary one is removed), so
+ * the password never leaks into the host's Spatie configuration or into
+ * later operations, and a host's customized instance is never lost.
  *
  * Archive contents (and nothing else): database/database.sql, .env,
  * quraba-backup.json. The plaintext dump and metadata files are deleted from
@@ -133,22 +137,51 @@ final readonly class SpatieArchiveEngine implements ArchiveEngine
             ],
         ]);
 
+        // Spatie's Zip reads the container's Config once, in its constructor.
+        // The host's own resolved Config instance (if any) is put back exactly
+        // as it was right after construction; nothing else is ever replaced.
+        $previous = $this->resolvedSpatieConfig();
         $this->container->instance(SpatieConfig::class, $scoped);
 
         try {
             $zip = new Zip($zipPath);
-
-            foreach ($entries as $name => $path) {
-                $zip->add($path, $name);
+        } finally {
+            if ($previous !== null) {
+                $this->container->instance(SpatieConfig::class, $previous);
+            } else {
+                $this->container->forgetInstance(SpatieConfig::class);
             }
 
-            $zip->close();
-        } finally {
-            // Never leave this run's password in the container; the host's own
-            // (scoped) Spatie binding, if any, is rebuilt from its config on
-            // next use.
-            $this->container->forgetInstance(SpatieConfig::class);
             unset($scoped);
         }
+
+        foreach ($entries as $name => $path) {
+            $zip->add($path, $name);
+        }
+
+        $zip->close();
+    }
+
+    /**
+     * The host application's already-resolved Spatie Config instance, read
+     * without resolving (and therefore without creating) one.
+     */
+    private function resolvedSpatieConfig(): ?SpatieConfig
+    {
+        if ($this->container instanceof IlluminateContainer) {
+            $instances = (new ReflectionProperty(IlluminateContainer::class, 'instances'))->getValue($this->container);
+            $instance = is_array($instances) ? ($instances[SpatieConfig::class] ?? null) : null;
+
+            return $instance instanceof SpatieConfig ? $instance : null;
+        }
+
+        // Other containers: a resolved shared binding is returned as-is by make().
+        if ($this->container->resolved(SpatieConfig::class) && $this->container->isShared(SpatieConfig::class)) {
+            $instance = $this->container->make(SpatieConfig::class);
+
+            return $instance;
+        }
+
+        return null;
     }
 }

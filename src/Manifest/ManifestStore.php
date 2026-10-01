@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Manifest;
 
-use Quraba\Backup\Domain\Identifiers;
+use Quraba\Backup\Exceptions\ConfigurationException;
 use Quraba\Backup\Exceptions\ManifestStoreFailed;
+use Quraba\Backup\Exceptions\RepositoryIdentityMismatch;
 use Quraba\Backup\Exceptions\StorageUnavailable;
 use Quraba\Backup\Identity\ApplicationIdentity;
 use Quraba\Backup\Models\BackupRun;
@@ -20,12 +21,12 @@ use Quraba\Backup\Storage\StoredObject;
  */
 final readonly class ManifestStore
 {
-    private const int MAX_MANIFEST_BYTES = 1048576;
+    private const int MAX_MANIFEST_BYTES = RemoteManifestCatalog::MAX_MANIFEST_BYTES;
 
-    /** How many recent manifests are consulted to learn the repository identity. */
-    private const int IDENTITY_LOOKBACK = 25;
-
-    public function __construct(private RemoteStorage $remote) {}
+    public function __construct(
+        private RemoteStorage $remote,
+        private RemoteManifestCatalog $catalog,
+    ) {}
 
     public function locatorFor(BackupRun $run): string
     {
@@ -68,34 +69,29 @@ final readonly class ManifestStore
     }
 
     /**
-     * The Restic repository ID recorded by the most recent manifests of this
-     * application and environment, if any. Used to learn the expected
-     * repository identity when the local catalog has none (e.g. after a
-     * catalog loss), so a replacement repository is never silently adopted.
+     * The Restic repository ID all manifests of this application and
+     * environment agree on, or null when no manifest records one.
+     *
+     * Every manifest is scanned (not a recent window), manifests without a
+     * repository ID are ignored, malformed documents never contribute, and
+     * conflicting IDs are a hard refusal: the operator must investigate which
+     * repository is authoritative. "Newest wins" is never applied.
+     *
+     * @throws RepositoryIdentityMismatch when manifests name different repositories
+     * @throws ConfigurationException when object storage is not configured
      */
-    public function latestRepositoryId(ApplicationIdentity $identity): ?string
+    public function repositoryIdConsensus(ApplicationIdentity $identity): ?string
     {
-        $objects = $this->remote->objects();
-        $paths = array_reverse($objects->listFiles($this->remote->layout()->manifestsRoot()));
+        $ids = $this->catalog->scan($identity)->repositoryIds();
 
-        foreach (array_slice($paths, 0, self::IDENTITY_LOOKBACK) as $path) {
-            if (! str_ends_with($path, '.json')) {
-                continue;
-            }
-
-            $manifest = json_decode($objects->read($path, self::MAX_MANIFEST_BYTES), true);
-
-            if (! is_array($manifest) || ($manifest['app_id'] ?? null) !== $identity->appId || ($manifest['environment'] ?? null) !== $identity->environment) {
-                continue;
-            }
-
-            $repositoryId = is_array($manifest['restic'] ?? null) ? ($manifest['restic']['repository_id'] ?? null) : null;
-
-            if (is_string($repositoryId) && Identifiers::isRepositoryId($repositoryId)) {
-                return $repositoryId;
-            }
+        if (count($ids) > 1) {
+            throw new RepositoryIdentityMismatch(sprintf(
+                'The remote manifests of this application/environment name %d different Restic repositories (%s). Refusing to choose one; investigate which repository is authoritative before any backup or restore.',
+                count($ids),
+                implode(', ', $ids),
+            ), 'restic.repository_identity_conflict');
         }
 
-        return null;
+        return $ids[0] ?? null;
     }
 }

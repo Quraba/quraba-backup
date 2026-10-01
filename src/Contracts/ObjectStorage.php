@@ -38,6 +38,15 @@ interface ObjectStorage
     public function read(string $path, int $maxBytes): string;
 
     /**
+     * Deletes exactly ONE object at an exact path. There is deliberately no
+     * prefix, wildcard or recursive deletion. Deleting an absent object is
+     * not an error; callers prove absence afterwards with exists().
+     *
+     * Only retention-controlled code calls this (architecture-tested).
+     */
+    public function delete(string $path): void;
+
+    /**
      * Recursively lists object paths below a prefix.
      *
      * @return list<string>

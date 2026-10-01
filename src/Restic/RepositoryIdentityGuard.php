@@ -20,9 +20,9 @@ use Quraba\Backup\Models\RepositoryIdentityRecord;
  * Repository identity continuity.
  *
  * The expected repository ID of this application/environment is taken from
- * (in order) the local catalog, the most recent remote manifests, or —
- * only when neither knows one — the first repository that is proven
- * readable. From then on every operation must open exactly that repository:
+ * (in order) the local catalog (authoritative once bound), the consensus of
+ * ALL remote manifests (conflicting manifests are a hard refusal), or — only
+ * when neither knows one — the first repository that is proven readable. From then on every operation must open exactly that repository:
  * a different repository at the configured location (for example an empty
  * replacement created after the original vanished) is refused, never adopted.
  *
@@ -139,7 +139,7 @@ final readonly class RepositoryIdentityGuard
         $identity = $this->identity->current();
 
         try {
-            $repositoryId = $this->manifests->latestRepositoryId($identity);
+            $repositoryId = $this->manifests->repositoryIdConsensus($identity);
         } catch (ConfigurationException) {
             // Object storage is not configured, so no manifest can exist yet.
             return null;

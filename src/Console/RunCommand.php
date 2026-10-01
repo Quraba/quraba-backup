@@ -10,7 +10,7 @@ use Quraba\Backup\Backup\ComponentOutcome;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Exceptions\ConfigurationException;
-use Quraba\Backup\Exceptions\OperationBusy;
+use Quraba\Backup\Exceptions\QurabaBackupException;
 use Throwable;
 
 final class RunCommand extends PackageCommand
@@ -34,10 +34,26 @@ final class RunCommand extends PackageCommand
 
         try {
             $result = $manager->run($profile, $trigger);
-        } catch (OperationBusy $exception) {
-            return $this->failWith($exception);
         } catch (Throwable $exception) {
+            // No catalog run exists for a refusal (busy lock, invalid identity):
+            // a scheduled one must still leave a trace outside the output file.
+            if ($trigger === BackupTrigger::Scheduled) {
+                $this->packageLogger()->warning('A scheduled Quraba backup was refused before it started.', [
+                    'profile' => $profile->value,
+                    'code' => $exception instanceof QurabaBackupException ? $exception->failureCode() : 'unexpected.error',
+                    'error' => $this->redactor()->redact($exception->getMessage()),
+                ]);
+            }
+
             return $this->failWith($exception);
+        }
+
+        if ($trigger === BackupTrigger::Scheduled && $result->exitCode() !== BackupRunResult::EXIT_COMPLETED) {
+            $this->packageLogger()->warning('A scheduled Quraba backup did not complete.', [
+                'run_uuid' => $result->run->uuid,
+                'status' => $result->status->value,
+                'failure_code' => $result->run->failure_code,
+            ]);
         }
 
         if ($this->wantsJson()) {

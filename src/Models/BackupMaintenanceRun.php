@@ -86,10 +86,16 @@ final class BackupMaintenanceRun extends PackageModel
         ]);
     }
 
-    public function markFailed(FailureDetails $failure): self
+    /**
+     * @param  list<mixed>  $affectedItems  changes physically proven before the failure
+     */
+    public function markFailed(FailureDetails $failure, array $affectedItems = []): self
     {
+        $this->assertAffectable($affectedItems);
+
         return $this->transitionTo(MaintenanceStatus::Failed, [
             'finished_at' => CarbonImmutable::now('UTC'),
+            'affected_items' => array_values(app(SecretRedactor::class)->redactArray($affectedItems)),
             ...$this->failureAttributes($failure),
         ]);
     }
@@ -102,9 +108,30 @@ final class BackupMaintenanceRun extends PackageModel
         ]);
     }
 
-    public function markIndeterminate(FailureDetails $reason): self
+    /**
+     * @param  list<mixed>  $affectedItems  changes physically proven before the uncertainty
+     */
+    public function markIndeterminate(FailureDetails $reason, array $affectedItems = []): self
     {
-        return $this->transitionTo(MaintenanceStatus::Indeterminate, $this->failureAttributes($reason));
+        $this->assertAffectable($affectedItems);
+
+        return $this->transitionTo(MaintenanceStatus::Indeterminate, [
+            'affected_items' => array_values(app(SecretRedactor::class)->redactArray($affectedItems)),
+            ...$this->failureAttributes($reason),
+        ]);
+    }
+
+    /**
+     * Records non-secret facts (inspection results, plan summaries).
+     *
+     * @param  array<string, mixed>  $values
+     */
+    public function mergeMetadata(array $values): self
+    {
+        $this->setAttribute('metadata', [...($this->metadata ?? []), ...app(SecretRedactor::class)->redactArray($values)]);
+        $this->save();
+
+        return $this;
     }
 
     /**
@@ -170,6 +197,16 @@ final class BackupMaintenanceRun extends PackageModel
             'finished_at' => UtcDateTime::class,
             'metadata' => 'array',
         ];
+    }
+
+    /**
+     * @param  list<mixed>  $affectedItems
+     */
+    private function assertAffectable(array $affectedItems): void
+    {
+        if ($this->dry_run && $affectedItems !== []) {
+            throw new IllegalStateTransition('A dry-run maintenance run cannot report affected items.');
+        }
     }
 
     /**

@@ -66,7 +66,7 @@ final readonly class CheckResult
     }
 
     /**
-     * @return array{id: string, label: string, status: string, message: string, details: array<string, mixed>}
+     * @return array{id: string, label: string, status: string, health_impact: string, message: string, details: array<string, mixed>}
      */
     public function toArray(): array
     {
@@ -74,6 +74,7 @@ final readonly class CheckResult
             'id' => $this->id,
             'label' => $this->label,
             'status' => $this->status->value,
+            'health_impact' => $this->healthImpact()->value,
             'message' => $this->message,
             'details' => $this->details,
         ];

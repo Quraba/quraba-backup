@@ -17,6 +17,7 @@ use Quraba\Backup\Enums\MaintenanceOperation;
 use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Identity\ApplicationIdentity;
 use Quraba\Backup\Identity\IdentityResolver;
+use Quraba\Backup\Maintenance\MaintenanceReconciler;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
@@ -44,6 +45,9 @@ use Throwable;
  *    different one is a collision and never overwritten);
  *  - the terminal state follows the same rules as a live run.
  *
+ * Afterwards interrupted maintenance is settled (see MaintenanceReconciler):
+ * retention intents from physical evidence, stale maintenance audits closed.
+ *
  * Every pass is audited as a `reconciliation` maintenance run.
  */
 final readonly class BackupReconciler
@@ -58,6 +62,7 @@ final readonly class BackupReconciler
         private MediaSnapshotService $media,
         private ResticRepository $repository,
         private RunFinalizer $finalizer,
+        private MaintenanceReconciler $maintenance,
         private SecretRedactor $redactor,
         private LoggerInterface $logger,
     ) {}
@@ -91,9 +96,20 @@ final readonly class BackupReconciler
                 throw $exception;
             }
 
-            $audit->markCompleted($dryRun ? [] : array_values(array_filter($items, static fn (array $item): bool => $item['before'] !== $item['after'])));
+            try {
+                $maintenance = $this->maintenance->reconcile($identity, $dryRun, $audit->uuid);
+            } catch (Throwable $exception) {
+                $audit->markFailed(FailureDetails::fromThrowable($exception, 'reconcile.maintenance', $this->redactor));
 
-            return new ReconciliationReport($audit->uuid, $dryRun, $items);
+                throw $exception;
+            }
+
+            $audit->markCompleted($dryRun ? [] : [
+                ...array_values(array_filter($items, static fn (array $item): bool => $item['before'] !== $item['after'])),
+                ...array_values(array_filter($maintenance, static fn (array $item): bool => ($item['outcome'] ?? null) === 'settled' || (isset($item['before']) && $item['before'] !== $item['after']))),
+            ]);
+
+            return new ReconciliationReport($audit->uuid, $dryRun, $items, $maintenance);
         } finally {
             $locks->release();
         }

@@ -69,6 +69,17 @@ final class ArchiveVerifier
                     throw new ArchiveVerificationFailed(sprintf('Archive entry [%s] is not AES-256 encrypted.', $stat['name']));
                 }
 
+                if (! $zip->getExternalAttributesIndex($index, $opsys, $attributes)) {
+                    throw new ArchiveVerificationFailed(sprintf('Archive entry [%s] has no readable file attributes.', $stat['name']));
+                }
+
+                if ($opsys === ZipArchive::OPSYS_UNIX && is_int($attributes)) {
+                    $type = ($attributes >> 16) & 0170000;
+                    if ($type !== 0 && $type !== 0100000) {
+                        throw new ArchiveVerificationFailed(sprintf('Archive entry [%s] is not a regular file.', $stat['name']));
+                    }
+                }
+
                 $entries[] = $stat['name'];
             }
 

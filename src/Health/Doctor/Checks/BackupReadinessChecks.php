@@ -215,7 +215,9 @@ final readonly class BackupReadinessChecks implements DoctorCheck
     private function schedule(): CheckResult
     {
         try {
-            $definitions = $this->container->make(BackupScheduler::class)->definitions();
+            $scheduler = $this->container->make(BackupScheduler::class);
+            $definitions = $scheduler->definitions();
+            $background = $scheduler->runsInBackground();
         } catch (Throwable $exception) {
             return CheckResult::fail('backup.schedule', 'Backup schedule', $exception->getMessage());
         }
@@ -224,6 +226,19 @@ final readonly class BackupReadinessChecks implements DoctorCheck
             return CheckResult::warn('backup.schedule', 'Backup schedule', 'No backup schedule is active (package or scheduling disabled). Backups only run when started manually.');
         }
 
-        return CheckResult::pass('backup.schedule', 'Backup schedule', implode('; ', array_map(static fn (ScheduleDefinition $d): string => $d->profile->value.' '.$d->describe(), $definitions)).'. Requires a cron entry running "php artisan schedule:run" every minute (or every 5 minutes).');
+        $details = [
+            'tasks' => array_map(static fn (ScheduleDefinition $d): string => $d->task.' '.$d->describe(), $definitions),
+            'background' => $background,
+            'background_supported' => BackupScheduler::platformSupportsBackground(),
+            'runs_in_maintenance_mode' => $scheduler->runsInMaintenanceMode(),
+        ];
+
+        $summary = implode('; ', $details['tasks']).'. Requires a cron entry running "php artisan schedule:run" every minute (or every 5 minutes).';
+
+        if (! $background) {
+            return CheckResult::warn('backup.schedule', 'Backup schedule', $summary.' Scheduled tasks run in the FOREGROUND of schedule:run'.(BackupScheduler::platformSupportsBackground() ? ' (background disabled by configuration)' : ' (background execution is not supported on this platform)').', so a long backup delays the other scheduled tasks of the host.', $details);
+        }
+
+        return CheckResult::pass('backup.schedule', 'Backup schedule', $summary.' Tasks run in the background (Laravel runInBackground); overlap is refused by the package lock.', $details);
     }
 }

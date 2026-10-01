@@ -13,7 +13,7 @@ permissions:
 jobs:
   quality:
     name: Quality (PHP ${{ matrix.php }}, ${{ matrix.database }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -42,6 +42,7 @@ jobs:
       QURABA_BACKUP_TEST_MYSQL_PORT: '3306'
       QURABA_BACKUP_TEST_MYSQL_USERNAME: 'root'
       QURABA_BACKUP_TEST_MYSQL_PASSWORD: 'root'
+      QURABA_BACKUP_TEST_EXPECT_FLAVOR: ${{ startsWith(matrix.database, 'mysql:') && 'mysql' || 'mariadb' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +79,23 @@ jobs:
           ./restic version
           echo "QURABA_BACKUP_TEST_RESTIC_BINARY=$RUNNER_TEMP/restic/restic" >> "$GITHUB_ENV"
 
-      - name: Database client tools
-        run: mysqldump --version
+      - name: Install real database clients on the Ubuntu host
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          if [[ '${{ matrix.database }}' == 'mysql:8.4' ]]; then
+            sudo apt-get install -y mysql-client-8.0
+            echo 'QURABA_BACKUP_DB_DUMP_BINARY=/usr/bin/mysqldump' >> "$GITHUB_ENV"
+            echo 'QURABA_BACKUP_DB_CLIENT_BINARY=/usr/bin/mysql' >> "$GITHUB_ENV"
+            mysqldump --version
+            mysql --version
+          else
+            sudo apt-get install -y mariadb-client
+            echo 'QURABA_BACKUP_DB_DUMP_BINARY=/usr/bin/mariadb-dump' >> "$GITHUB_ENV"
+            echo 'QURABA_BACKUP_DB_CLIENT_BINARY=/usr/bin/mariadb' >> "$GITHUB_ENV"
+            mariadb-dump --version
+            mariadb --version
+          fi
 
       - name: Tests (no B2 credentials, no Redis, no sudo)
         run: vendor/bin/phpunit

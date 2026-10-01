@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Quraba\Backup\Archive\Database;
 
 use InvalidArgumentException;
+use Quraba\Backup\Database\MySqlOptionFile;
 use Quraba\Backup\Support\Process\ChildEnvironment;
 use Quraba\Backup\Support\Process\ProcessFactory;
 use Spatie\DbDumper\Databases\MySql;
@@ -20,8 +21,9 @@ use Spatie\DbDumper\Exceptions\CannotStartDump;
  * configuration surface and success checks but executes the dump itself:
  *
  *  - an argument array, run through the package ProcessFactory (no shell);
- *  - credentials only in a 0600 option file inside the operation workspace,
- *    passed with --defaults-extra-file and deleted immediately afterwards;
+ *  - credentials only in an option file inside the operation workspace that
+ *    is proven private (0600, owner) before they are written, passed with
+ *    --defaults-extra-file and destroyed immediately afterwards;
  *  - the dump written by the tool itself via --result-file (streamed to
  *    disk, never through PHP memory);
  *  - a minimal child environment and a positive timeout.
@@ -129,53 +131,31 @@ final class ArgvMySqlDumper extends MySql
         return $arguments;
     }
 
+    /**
+     * Refuses (WorkspaceViolation) when the file cannot be proven private.
+     */
     private function writeCredentialsFile(): string
     {
-        $path = rtrim($this->credentialsDirectory, '/').'/client-'.bin2hex(random_bytes(8)).'.cnf';
-        $handle = @fopen($path, 'xb');
-
-        if ($handle === false) {
-            throw CannotStartDump::emptyParameter('credentials file');
-        }
-
-        @chmod($path, 0600);
-
-        $lines = ['[client]', 'user='.self::quote($this->userName), 'password='.self::quote($this->password)];
-
-        if ($this->socket !== '') {
-            $lines[] = 'socket='.self::quote($this->socket);
-        } else {
-            $lines[] = 'host='.self::quote($this->host);
-            $lines[] = 'port='.$this->port;
-        }
-
-        fwrite($handle, implode("\n", $lines)."\n");
-        fclose($handle);
-
-        return $path;
+        return MySqlOptionFile::write(
+            $this->credentialsDirectory,
+            $this->userName,
+            $this->password,
+            $this->host,
+            $this->port,
+            $this->socket === '' ? null : $this->socket,
+        );
     }
 
     private function destroyCredentialsFile(string $path): void
     {
-        if (is_file($path)) {
-            $size = (int) @filesize($path);
-            @file_put_contents($path, str_repeat("\0", max(1, $size)));
-            @unlink($path);
-        }
+        MySqlOptionFile::destroy($path);
     }
 
     /**
-     * Quotes a value for a MySQL option file. The client strips only the
-     * outer quotes and interprets backslash escapes (unknown ones keep the
-     * backslash), so only backslashes are escaped; inner quotes and "#" are
-     * literal inside a quoted value. Line breaks cannot be represented.
+     * @see MySqlOptionFile::quote()
      */
     public static function quote(#[\SensitiveParameter] string $value): string
     {
-        if (preg_match('/[\r\n\0]/', $value) === 1) {
-            throw new InvalidArgumentException('Database credentials containing line breaks cannot be written to a MySQL option file.');
-        }
-
-        return '"'.str_replace('\\', '\\\\', $value).'"';
+        return MySqlOptionFile::quote($value);
     }
 }

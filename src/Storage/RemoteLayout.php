@@ -17,6 +17,7 @@ use Quraba\Backup\Restic\RepositoryLocation;
  *
  *   {prefix}/{app_id}/archives/YYYY/MM/DD/{run_uuid}/application.zip
  *   {prefix}/{app_id}/manifests/YYYY/MM/DD/{run_uuid}.json
+ *   {prefix}/{app_id}/retention/{run_uuid}.json   ← retention tombstones
  *   {prefix}/{app_id}/{restic}/...          ← owned exclusively by Restic
  *
  * Dates come from the run's immutable UTC request time, so every retry of a
@@ -27,6 +28,10 @@ final readonly class RemoteLayout
     public const string ARCHIVES = 'archives';
 
     public const string MANIFESTS = 'manifests';
+
+    public const string RETENTION = 'retention';
+
+    private const string ARCHIVE_PATTERN = '~^archives/\d{4}/\d{2}/\d{2}/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/application\.zip$~';
 
     private function __construct(
         public string $prefix,
@@ -53,8 +58,8 @@ final readonly class RemoteLayout
 
         $firstResticSegment = explode('/', $resticPrefix)[0];
 
-        if (in_array($firstResticSegment, [self::ARCHIVES, self::MANIFESTS], true)) {
-            throw new ConfigurationException('QURABA_BACKUP_RESTIC_PREFIX must not be "archives" or "manifests"; the Restic prefix belongs only to Restic.');
+        if (in_array($firstResticSegment, [self::ARCHIVES, self::MANIFESTS, self::RETENTION], true)) {
+            throw new ConfigurationException('QURABA_BACKUP_RESTIC_PREFIX must not be "archives", "manifests" or "retention"; the Restic prefix belongs only to Restic.');
         }
 
         return new self($prefix, Identifiers::assertUuid($appId, 'The application ID'), $resticPrefix);
@@ -73,6 +78,29 @@ final readonly class RemoteLayout
     public function manifestsRoot(): string
     {
         return $this->applicationRoot().self::MANIFESTS.'/';
+    }
+
+    public function retentionRoot(): string
+    {
+        return $this->applicationRoot().self::RETENTION.'/';
+    }
+
+    public function tombstone(string $runUuid): string
+    {
+        return $this->retentionRoot().Identifiers::assertUuid($runUuid, 'The run UUID').'.json';
+    }
+
+    /**
+     * The run UUID of an exact archive locator of this application, or null
+     * when the path is not precisely `archives/YYYY/MM/DD/{uuid}/application.zip`.
+     */
+    public function archiveRunUuid(string $path): ?string
+    {
+        if (! str_starts_with($path, $this->applicationRoot())) {
+            return null;
+        }
+
+        return preg_match(self::ARCHIVE_PATTERN, substr($path, strlen($this->applicationRoot())), $matches) === 1 ? $matches[1] : null;
     }
 
     public function resticRoot(): string
@@ -102,8 +130,8 @@ final readonly class RemoteLayout
             throw new ConfigurationException('Refusing to access the Restic repository prefix through object storage.');
         }
 
-        if (! str_starts_with($path, $this->archivesRoot()) && ! str_starts_with($path, $this->manifestsRoot())) {
-            throw new ConfigurationException('Refusing to access a remote path outside this application\'s archives/manifests prefixes.');
+        if (! str_starts_with($path, $this->archivesRoot()) && ! str_starts_with($path, $this->manifestsRoot()) && ! str_starts_with($path, $this->retentionRoot())) {
+            throw new ConfigurationException('Refusing to access a remote path outside this application\'s archives/manifests/retention prefixes.');
         }
 
         return $path;

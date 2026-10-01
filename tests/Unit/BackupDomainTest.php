@@ -174,7 +174,9 @@ final class BackupDomainTest extends TestCase
     public function test_option_file_quoting(): void
     {
         self::assertSame('"a\\\\b"', ArgvMySqlDumper::quote('a\\b'));
-        self::assertSame('"with "quotes" # and hash"', ArgvMySqlDumper::quote('with "quotes" # and hash'));
+        self::assertSame('"with \\"quotes\\" # and hash"', ArgvMySqlDumper::quote('with "quotes" # and hash'));
+        self::assertSame('""', ArgvMySqlDumper::quote(''));
+        self::assertSame('"space\\t#;\'\\"\\\\"', ArgvMySqlDumper::quote("space\t#;'\"\\"));
 
         $this->expectException(InvalidArgumentException::class);
         ArgvMySqlDumper::quote("line\nbreak");

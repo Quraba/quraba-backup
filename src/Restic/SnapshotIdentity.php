@@ -60,6 +60,17 @@ final readonly class SnapshotIdentity
         return [self::MARKER, 'run:'.$this->runUuid];
     }
 
+    /**
+     * AND filter selecting every Quraba snapshot of one application and
+     * environment (retention proofs, consistency checks).
+     *
+     * @return list<string>
+     */
+    public static function applicationSelector(ApplicationIdentity $identity): array
+    {
+        return ResticTag::assertAll([self::MARKER, 'app:'.$identity->appId, 'env:'.$identity->environment]);
+    }
+
     public function matches(ResticSnapshot $snapshot): bool
     {
         if (! $snapshot->hasTag(self::MARKER)) {

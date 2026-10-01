@@ -44,7 +44,8 @@ final class SchedulingTest extends TestCase
 
         foreach ($events as $event) {
             self::assertStringContainsString('--scheduled', (string) $event->command);
-            self::assertTrue($event->evenInMaintenanceMode, 'Backups still run while the site is down.');
+            self::assertFalse($event->evenInMaintenanceMode, 'Default schedules must pause during unrelated maintenance.');
+            self::assertSame(BackupScheduler::platformSupportsBackground(), $event->runInBackground);
             self::assertSame(0, ((int) explode(' ', $event->expression)[0]) % 5, 'Due minutes must suit a 5-minute cron.');
         }
     }
@@ -92,5 +93,26 @@ final class SchedulingTest extends TestCase
 
         self::assertSame('45 4 15 * *', $recovery->expression);
         self::assertSame('Asia/Riyadh', $recovery->timezone);
+    }
+
+    public function test_background_mode_can_be_disabled_and_maintenance_mode_requires_opt_in(): void
+    {
+        $this->config()->set('quraba-backup.schedule.background', 'false');
+        $this->config()->set('quraba-backup.schedule.even_in_maintenance_mode', true);
+
+        foreach ($this->packageEvents() as $event) {
+            self::assertFalse($event->runInBackground);
+            self::assertTrue($event->evenInMaintenanceMode);
+        }
+    }
+
+    public function test_invalid_package_schedule_does_not_break_host_scheduler(): void
+    {
+        $this->config()->set('quraba-backup.schedule.database.time', '02:07');
+        $this->app->forgetInstance(Schedule::class);
+        $schedule = $this->app->make(Schedule::class);
+        $schedule->command('cache:clear')->daily();
+
+        self::assertCount(1, $schedule->events());
     }
 }

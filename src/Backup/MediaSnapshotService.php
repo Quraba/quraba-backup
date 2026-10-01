@@ -175,7 +175,9 @@ final readonly class MediaSnapshotService
      */
     private function prove(SnapshotIdentity $identity, string $snapshotId, array $roots, string $repositoryId): ResticSnapshot
     {
-        $matches = $this->repository->snapshots($identity->tags(), [$snapshotId]);
+        // Exact ID only (Restic ignores tag filters next to IDs); the full
+        // identity is checked below on the returned document.
+        $matches = $this->repository->snapshots([], [$snapshotId]);
 
         if (count($matches) !== 1 || $matches[0]->id !== $snapshotId || ! $identity->matches($matches[0])) {
             throw ResticSnapshotFailed::identityMismatch(sprintf('snapshot %s could not be re-read with the exact expected identity', $snapshotId));

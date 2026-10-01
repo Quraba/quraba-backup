@@ -134,6 +134,7 @@ return [
     'archive' => [
         'password' => env('QURABA_BACKUP_ARCHIVE_PASSWORD'),
         'include_env' => (bool) env('QURABA_BACKUP_ARCHIVE_INCLUDE_ENV', true),
+        'release_id' => env('QURABA_BACKUP_RELEASE_ID'),
     ],
 
     /*
@@ -193,6 +194,8 @@ return [
     */
     'schedule' => [
         'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_ENABLED', true),
+        'background' => env('QURABA_BACKUP_SCHEDULE_BACKGROUND', 'auto'),
+        'even_in_maintenance_mode' => (bool) env('QURABA_BACKUP_SCHEDULE_IN_MAINTENANCE', false),
         'timezone' => env('QURABA_BACKUP_SCHEDULE_TIMEZONE'),    // null: app timezone
         'database' => [
             'enabled' => (bool) env('QURABA_BACKUP_SCHEDULE_DATABASE', true),
@@ -212,7 +215,7 @@ return [
         ],
     ],
 
-    /* Reserved: retention is plan-only by default when it arrives. */
+    /* Retention plans are read-only unless --execute is supplied. */
     'retention' => [
         'execute_scheduled' => false,
         'database' => ['keep_latest' => 7, 'keep_daily' => 14, 'keep_weekly' => 8, 'keep_monthly' => 12, 'keep_yearly' => 2],
@@ -221,15 +224,23 @@ return [
         'safety_days' => 30,
     ],
 
-    /* Reserved: restore arrives in later phases; these are its fixed safety defaults. */
+    /* Restore is a dry-run-only preparation workflow in this release. */
     'restore' => [
         'require_atomic_media_swap' => true,
+        'safety_margin_percent' => 20,
+        'db_validation_level' => env('QURABA_BACKUP_RESTORE_DB_VALIDATION', 'artifact'),
+        'scratch_connection' => env('QURABA_BACKUP_SCRATCH_CONNECTION'),
         'auto_up' => false,
         'confirmation_phrase' => 'RESTORE_APPLICATION',
     ],
 
     /* Reserved: recovery health thresholds (hours since last verified artifact). */
     'health' => [
+        'partial_window_hours' => 170,
+        'max_consecutive_failures' => 3,
+        'retention_max_age_hours' => 192,
+        'check_max_age_days' => 35,
+        'restore_diagnostic_days' => 7,
         'max_age_hours' => [
             'database' => 26,
             'media' => 26,

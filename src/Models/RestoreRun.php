@@ -88,6 +88,15 @@ final class RestoreRun extends PackageModel
         return $this->mode === RestoreMode::DryRun;
     }
 
+    /** @param array<string, mixed> $values */
+    public function mergeMetadata(array $values): self
+    {
+        $this->setAttribute('metadata', [...($this->metadata ?? []), ...app(SecretRedactor::class)->redactArray($values)]);
+        $this->save();
+
+        return $this;
+    }
+
     public function markResolving(): self
     {
         return $this->transitionTo(RestoreStatus::Resolving);

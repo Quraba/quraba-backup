@@ -82,9 +82,9 @@ final class MediaSnapshotTest extends TestCase
         }
         self::assertSame(str_replace('\\', '/', $this->mediaRoot), end($backup[0]));
 
-        // Exact re-read: the full identity AND-filter plus the exact ID.
-        $identityFilter = 'quraba-backup,app:'.self::APP_ID.',env:testing,kind:media,run:'.$run->uuid;
-        self::assertContains('snapshots --json --no-lock --tag '.$identityFilter.' -- '.$result->snapshotId, $this->invokedCommands());
+        // Restic ignores tag filters beside explicit IDs; code validates the
+        // returned full identity after the exact-ID re-read.
+        self::assertContains('snapshots --json --no-lock -- '.$result->snapshotId, $this->invokedCommands());
 
         // First proven repository becomes the expected identity.
         self::assertSame(self::REPO, RepositoryIdentityRecord::query()->value('repository_id'));
@@ -157,9 +157,14 @@ final class MediaSnapshotTest extends TestCase
 
     public function test_expected_identity_is_learned_from_remote_manifests_when_the_catalog_has_none(): void
     {
-        $path = $this->sandbox.'/b2/quraba-backup/'.self::APP_ID.'/manifests/2026/09/30/5ff081a8-503e-44ba-91ae-30cfef9b972f.json';
-        mkdir(dirname($path), 0700, true);
-        file_put_contents($path, (string) json_encode(['app_id' => self::APP_ID, 'environment' => 'testing', 'restic' => ['repository_id' => str_repeat('ef', 32)]]));
+        $seed = $this->manager()->run(BackupProfile::Media)->run;
+        $locator = $seed->artifacts()->where('kind', ArtifactKind::RemoteManifest->value)->value('locator');
+        self::assertIsString($locator);
+        $path = $this->bucketPath($locator);
+        $manifest = json_decode((string) file_get_contents($path), true);
+        $manifest['restic']['repository_id'] = str_repeat('ef', 32);
+        file_put_contents($path, json_encode($manifest));
+        RepositoryIdentityRecord::query()->delete();
 
         [$run, $artifact] = $this->runningMediaRun();
 

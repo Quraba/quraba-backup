@@ -29,12 +29,13 @@ Remote layout (one bucket may hold several applications):
 ```text
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/archives/YYYY/MM/DD/{run_uuid}/application.zip
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/manifests/YYYY/MM/DD/{run_uuid}.json
+{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/retention/{run_uuid}.json
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/restic/…        ← managed exclusively by Restic
 ```
 
-The application key needs read, write and list access to the bucket (archives, manifests and the Restic
-repository). Do **not** add B2 lifecycle rules that delete objects under these prefixes; retention (a later
-phase) is done by the package and Restic. Credentials stay in the environment; the package never stores
+The application key needs read, write, list and exact delete access to the bucket (archives, manifests,
+retention tombstones and the Restic repository). Do **not** add B2 lifecycle rules that delete objects under
+these prefixes; explicit package retention and Restic maintain them. Credentials stay in the environment; the package never stores
 them in the database and never registers them as a named Laravel disk.
 
 Restic may use separate credentials via `QURABA_BACKUP_RESTIC_B2_KEY_ID` /
@@ -83,6 +84,20 @@ The application connection (`QURABA_BACKUP_DB_CONNECTION`, default: the default 
 (`mariadb-dump`, then `mysqldump`, preferring `mysqldump` for Oracle MySQL servers) or set with
 `QURABA_BACKUP_DB_DUMP_BINARY`. `QURABA_BACKUP_DB_DUMP_TIMEOUT` (seconds, default 3600) bounds the dump;
 `QURABA_BACKUP_DB_DUMP_ROUTINES=false` skips stored routines if the database user lacks the privilege.
+
+For restore preparation, `QURABA_BACKUP_RESTORE_DB_VALIDATION` selects `artifact` (default), `schema`, or
+`scratch_import`. The last level needs `QURABA_BACKUP_SCRATCH_CONNECTION`, a dedicated, empty database
+configured as a Laravel connection. The package proves `SELECT DATABASE()` differs from production and
+requires a distinct scratch account whose visible grants are confined to that database. The scratch user
+needs schema creation and deletion rights there; do not use a root or globally privileged account. The
+package fingerprints the import and removes imported tables, views, routines and events. The production user does not need
+`CREATE DATABASE`. When granting access to a scratch database whose name contains underscores, escape each
+underscore as `\_` in the database-level `GRANT` scope; otherwise the grant can cover other database names.
+See [Recovery operations](recovery-operations.md).
+
+`QURABA_BACKUP_RELEASE_ID` identifies an application release in new encrypted archive metadata (hashed,
+never exposed). Without it, the package uses the SHA-256 of `composer.lock` where available. Older archives
+remain readable and report release compatibility as unknown.
 
 ## Media roots
 

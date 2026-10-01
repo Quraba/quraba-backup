@@ -44,6 +44,25 @@ final readonly class OperationCoordinator
         return new HeldLocks([$global, $specific]);
     }
 
+    /**
+     * Restore PREPARATION (dry run): only the restore lock. Preparation reads
+     * backups into private workspaces and never changes the live
+     * application, so it must not block backups or application writes; it
+     * only excludes other restore preparation (and, later, live restores,
+     * which will take the global AND restore locks). Retention protects the
+     * sources of unresolved restores, so a concurrent retention pass cannot
+     * remove the backup being reconstructed.
+     */
+    public function beginRestorePreparation(string $purpose): HeldLocks
+    {
+        return new HeldLocks([$this->locks->acquire(LockName::Restore, $purpose)]);
+    }
+
+    public function isRestorePreparationRunning(): bool
+    {
+        return $this->locks->isHeldElsewhere(LockName::Restore);
+    }
+
     public function isWriteOperationRunning(): bool
     {
         return $this->locks->isHeldElsewhere(LockName::GlobalOperation);

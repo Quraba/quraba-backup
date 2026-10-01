@@ -145,10 +145,16 @@ final class ResticRunnerTest extends TestCase
 
     public function test_only_exact_snapshot_ids_are_accepted_for_forget_restore_and_stats(): void
     {
-        $this->useFakeRestic(['repository' => 'ready']);
+        $id = str_repeat('9f', 32);
+        $this->useFakeRestic(['repository' => 'ready', 'snapshots' => [[
+            'id' => $id,
+            'tags' => [],
+            'paths' => [$this->sandbox.'/media'],
+        ]]]);
         $workspace = $this->app->make(WorkspaceManager::class)->create();
 
         foreach ([
+            fn () => $this->runner()->forget([]),
             fn () => $this->runner()->forget(['latest']),
             fn () => $this->runner()->forget(['abcd1234']),
             fn () => $this->runner()->restore('latest', $workspace),
@@ -162,7 +168,6 @@ final class ResticRunnerTest extends TestCase
             }
         }
 
-        $id = str_repeat('9f', 32);
         $this->runner()->forget([$id])->throwIfFailed();
         $this->runner()->restore($id, $workspace)->throwIfFailed();
 

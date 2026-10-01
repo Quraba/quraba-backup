@@ -169,6 +169,33 @@ final class ArchiveTest extends TestCase
         $this->app->make(ArchiveVerifier::class)->verify($path, Sentinels::ARCHIVE_PASSWORD, self::RUN, $this->app->make(IdentityResolver::class)->current());
     }
 
+    public function test_archive_with_a_link_like_entry_is_rejected(): void
+    {
+        $created = $this->engine()->create($this->request());
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($created->path));
+        self::assertTrue($zip->setExternalAttributesName('database/database.sql', ZipArchive::OPSYS_UNIX, 0120777 << 16));
+        self::assertTrue($zip->close());
+
+        $this->expectException(ArchiveVerificationFailed::class);
+        $this->expectExceptionMessage('not a regular file');
+        $this->app->make(ArchiveVerifier::class)->verify($created->path, Sentinels::ARCHIVE_PASSWORD, self::RUN, $this->app->make(IdentityResolver::class)->current());
+    }
+
+    public function test_archive_with_a_traversal_entry_is_rejected(): void
+    {
+        $created = $this->engine()->create($this->request());
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($created->path));
+        self::assertTrue($zip->addFromString('../escape.txt', 'malicious'));
+        self::assertTrue($zip->setEncryptionName('../escape.txt', ZipArchive::EM_AES_256, Sentinels::ARCHIVE_PASSWORD));
+        self::assertTrue($zip->close());
+
+        $this->expectException(ArchiveVerificationFailed::class);
+        $this->expectExceptionMessage('differ from the expected');
+        $this->app->make(ArchiveVerifier::class)->verify($created->path, Sentinels::ARCHIVE_PASSWORD, self::RUN, $this->app->make(IdentityResolver::class)->current());
+    }
+
     public function test_missing_password_is_refused_before_anything_is_created(): void
     {
         foreach (['', '   '] as $password) {
@@ -192,6 +219,47 @@ final class ArchiveTest extends TestCase
 
         self::assertNull($this->config()->get('backup.backup.password'), 'The host\'s own Spatie config is never modified.');
         self::assertFalse($this->app->resolved(SpatieConfig::class) && ($this->app->make(SpatieConfig::class)->backup->password === Sentinels::ARCHIVE_PASSWORD));
+    }
+
+    public function test_spatie_resolved_host_instance_is_restored_exactly(): void
+    {
+        $host = SpatieConfig::fromArray([]);
+        $this->app->instance(SpatieConfig::class, $host);
+
+        $this->engine()->create($this->request());
+
+        self::assertSame($host, $this->app->make(SpatieConfig::class));
+        self::assertNotSame(Sentinels::ARCHIVE_PASSWORD, $host->backup->password);
+    }
+
+    public function test_spatie_temporary_instance_is_removed_when_no_host_instance_existed(): void
+    {
+        $this->app->forgetInstance(SpatieConfig::class);
+        $this->engine()->create($this->request());
+        self::assertFalse($this->app->resolved(SpatieConfig::class));
+    }
+
+    public function test_spatie_host_instance_survives_an_archive_build_exception(): void
+    {
+        $host = SpatieConfig::fromArray([]);
+        $this->app->instance(SpatieConfig::class, $host);
+        $engine = $this->engine();
+        $threw = false;
+
+        try {
+            (new \ReflectionMethod(SpatieArchiveEngine::class, 'buildZip'))->invoke(
+                $engine,
+                $this->workspace->path(WorkspaceArea::Archive, 'missing-directory/archive.zip'),
+                Sentinels::ARCHIVE_PASSWORD,
+                ['database/database.sql' => $this->workspace->path(WorkspaceArea::Database, 'absent.sql')],
+            );
+        } catch (\Throwable) {
+            $threw = true;
+        }
+
+        self::assertTrue($threw, 'The invalid archive path must exercise the exception path.');
+        self::assertSame($host, $this->app->make(SpatieConfig::class));
+        self::assertNotSame(Sentinels::ARCHIVE_PASSWORD, $host->backup->password);
     }
 
     public function test_engine_reports_strong_encryption_support(): void

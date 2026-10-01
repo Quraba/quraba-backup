@@ -23,13 +23,19 @@ use Quraba\Backup\Backup\BackupManager;
 use Quraba\Backup\Backup\BackupReconciler;
 use Quraba\Backup\Consistency\LaravelMaintenanceProvider;
 use Quraba\Backup\Consistency\NoneQuiescenceProvider;
+use Quraba\Backup\Console\DiscoverCommand;
 use Quraba\Backup\Console\DoctorCommand;
+use Quraba\Backup\Console\HealthCommand;
 use Quraba\Backup\Console\IdentityCommand;
 use Quraba\Backup\Console\InstallResticCommand;
 use Quraba\Backup\Console\ListCommand;
 use Quraba\Backup\Console\ReconcileCommand;
+use Quraba\Backup\Console\ResticCheckCommand;
 use Quraba\Backup\Console\ResticHealthCommand;
 use Quraba\Backup\Console\ResticInitCommand;
+use Quraba\Backup\Console\ResticPruneCommand;
+use Quraba\Backup\Console\RestoreCommand;
+use Quraba\Backup\Console\RetentionCommand;
 use Quraba\Backup\Console\RunCommand;
 use Quraba\Backup\Console\WorkspaceCleanupCommand;
 use Quraba\Backup\Console\WorkspaceListCommand;
@@ -43,6 +49,7 @@ use Quraba\Backup\Coordination\FileLockManager;
 use Quraba\Backup\Coordination\OperationCoordinator;
 use Quraba\Backup\Database\DatabaseToolLocator;
 use Quraba\Backup\Exceptions\ConfigurationException;
+use Quraba\Backup\Health\BackupHealthService;
 use Quraba\Backup\Health\Doctor\Checks\BackupReadinessChecks;
 use Quraba\Backup\Health\Doctor\Checks\DatabaseChecks;
 use Quraba\Backup\Health\Doctor\Checks\IdentityChecks;
@@ -55,6 +62,10 @@ use Quraba\Backup\Health\Doctor\Checks\StorageChecks;
 use Quraba\Backup\Health\Doctor\DoctorService;
 use Quraba\Backup\Health\ResticHealthService;
 use Quraba\Backup\Identity\IdentityResolver;
+use Quraba\Backup\Maintenance\MaintenanceReconciler;
+use Quraba\Backup\Maintenance\ResticMaintenanceService;
+use Quraba\Backup\Manifest\ManifestStore;
+use Quraba\Backup\Manifest\RemoteManifestCatalog;
 use Quraba\Backup\Media\MediaRootResolver;
 use Quraba\Backup\Restic\Installer\Bzip2Decompressor;
 use Quraba\Backup\Restic\Installer\HttpReleaseDownloader;
@@ -67,6 +78,16 @@ use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Restic\ResticRedactor;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
+use Quraba\Backup\Restore\ArchiveReconstructor;
+use Quraba\Backup\Restore\ResticReconstructor;
+use Quraba\Backup\Restore\RestoreDatabaseValidator;
+use Quraba\Backup\Restore\RestoreDryRunService;
+use Quraba\Backup\Restore\RestorePreflight;
+use Quraba\Backup\Restore\RestoreSourceResolver;
+use Quraba\Backup\Retention\RetentionExecutor;
+use Quraba\Backup\Retention\RetentionInventory;
+use Quraba\Backup\Retention\RetentionPlanner;
+use Quraba\Backup\Retention\RetentionTombstoneStore;
 use Quraba\Backup\Scheduling\BackupScheduler;
 use Quraba\Backup\Security\KnownSecrets;
 use Quraba\Backup\Security\SecretRedactor;
@@ -134,8 +155,14 @@ final class QurabaBackupServiceProvider extends ServiceProvider
     {
         // Registered whenever the scheduler is resolved (schedule:run,
         // schedule:list); BackupScheduler guards against duplicates.
+        // A misconfigured package schedule is logged (and reported by the
+        // doctor) but never breaks the host application's own scheduler.
         $this->callAfterResolving(Schedule::class, function (Schedule $schedule): void {
-            $this->app->make(BackupScheduler::class)->register($schedule);
+            try {
+                $this->app->make(BackupScheduler::class)->register($schedule);
+            } catch (\Throwable $exception) {
+                self::logger($this->app)->error('Quraba Backup schedules were not registered: '.$this->app->make(SecretRedactor::class)->redact($exception->getMessage()));
+            }
         });
 
         if (! $this->app->runningInConsole()) {
@@ -161,6 +188,12 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             ResticInitCommand::class,
             ResticHealthCommand::class,
             DoctorCommand::class,
+            DiscoverCommand::class,
+            HealthCommand::class,
+            RetentionCommand::class,
+            ResticCheckCommand::class,
+            ResticPruneCommand::class,
+            RestoreCommand::class,
             RunCommand::class,
             ListCommand::class,
             ReconcileCommand::class,
@@ -232,6 +265,21 @@ final class QurabaBackupServiceProvider extends ServiceProvider
         $this->app->singleton(ArchiveVerifier::class);
         $this->app->singleton(ArchiveMetadata::class);
         $this->app->singleton(ArchiveStore::class);
+        $this->app->singleton(RemoteManifestCatalog::class);
+        $this->app->singleton(ManifestStore::class);
+        $this->app->singleton(RetentionTombstoneStore::class);
+        $this->app->singleton(RetentionInventory::class);
+        $this->app->singleton(RetentionPlanner::class);
+        $this->app->singleton(RetentionExecutor::class);
+        $this->app->singleton(MaintenanceReconciler::class);
+        $this->app->singleton(ResticMaintenanceService::class);
+        $this->app->singleton(BackupHealthService::class);
+        $this->app->singleton(RestoreSourceResolver::class);
+        $this->app->singleton(ArchiveReconstructor::class);
+        $this->app->singleton(ResticReconstructor::class);
+        $this->app->singleton(RestorePreflight::class);
+        $this->app->singleton(RestoreDatabaseValidator::class);
+        $this->app->singleton(RestoreDryRunService::class);
 
         $this->app->singleton(ArchiveEngine::class, fn (Application $app): SpatieArchiveEngine => new SpatieArchiveEngine(
             $app,
@@ -276,7 +324,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
 
         $this->app->singleton(BackupScheduler::class);
 
-        $this->app->when([BackupManager::class, BackupReconciler::class])
+        $this->app->when([BackupManager::class, BackupReconciler::class, BackupScheduler::class, RetentionExecutor::class])
             ->needs(LoggerInterface::class)
             ->give(fn (Application $app): LoggerInterface => self::logger($app));
     }

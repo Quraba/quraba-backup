@@ -89,3 +89,6 @@
   public directory, never displayed.
 - **Catalog rebuild** adopts only what was observed physically and refuses a repository whose identity does
   not match.
+- **Optional Filament panel.** All pages and actions require host-defined authorization. Backup buttons
+  write pending catalog requests for the scheduler; web requests cannot invoke the destructive live restore,
+  retention execution or Restic prune. The UI only reports secret presence, never secret values.

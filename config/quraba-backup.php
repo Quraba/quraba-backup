@@ -96,9 +96,12 @@ return [
         'client_binary' => env('QURABA_BACKUP_DB_CLIENT_BINARY'),
         // Include stored procedures/functions in the dump (triggers are always included).
         'dump_routines' => (bool) env('QURABA_BACKUP_DB_DUMP_ROUTINES', true),
-        // Scheduled events are only dumped when enabled (the database account
-        // needs the EVENT privilege). A live restore replaces the database
-        // exactly: events that are not in the backup do not come back.
+        // auto includes events when SHOW GRANTS proves EVENT/ALL on this DB;
+        // required fails the backup unless that privilege is proven;
+        // assume_none is an explicit shared-hosting opt-out. In auto mode a
+        // backup without proven EVENT is marked incomplete, never silently exact.
+        'event_policy' => env('QURABA_BACKUP_DB_EVENT_POLICY', 'auto'),
+        // Legacy true remains a request to require event protection.
         'dump_events' => (bool) env('QURABA_BACKUP_DB_DUMP_EVENTS', false),
         'tool_search_paths' => [
             '/usr/bin',
@@ -106,6 +109,24 @@ return [
             '/usr/local/mysql/bin',
             '/opt/cpanel/ea-mariadb/bin',
         ],
+    ],
+
+    // Optional operational alerts. A host may set callback to a callable
+    // receiving OperationalNotice, or notifiable to a callable returning a
+    // Laravel notifiable. No mail/channel is assumed by default.
+    'notifications' => [
+        'enabled' => false,
+        'callback' => null,
+        'notifiable' => null,
+        'channels' => [],
+        'notify_recovery' => false,
+    ],
+
+    // Register QurabaBackupPlugin explicitly in an authenticated Filament 5
+    // panel. Every ability defaults to denied until a host Gate/callback grants it.
+    'filament' => [
+        'pending_enabled' => false,
+        'authorization' => [],
     ],
 
     /*
@@ -254,6 +275,7 @@ return [
         'require_atomic_media_swap' => true,
         'safety_margin_percent' => 20,
         'db_validation_level' => env('QURABA_BACKUP_RESTORE_DB_VALIDATION', 'artifact'),
+        'require_complete_database' => (bool) env('QURABA_BACKUP_RESTORE_REQUIRE_COMPLETE_DATABASE', false),
         'scratch_connection' => env('QURABA_BACKUP_SCRATCH_CONNECTION'),
         'auto_up' => (bool) env('QURABA_BACKUP_RESTORE_AUTO_UP', false),
         // A dump names the account that defined each view, trigger and

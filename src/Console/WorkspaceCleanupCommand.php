@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Console;
 
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
 use Quraba\Backup\Workspace\CleanupReport;
 use Quraba\Backup\Workspace\WorkspaceInfo;
 use Quraba\Backup\Workspace\WorkspaceManager;
@@ -16,13 +17,31 @@ final class WorkspaceCleanupCommand extends PackageCommand
     protected $signature = 'quraba:backup:workspace:cleanup
         {--older-than= : Hours after which an inactive workspace counts as abandoned (default from config, minimum 1)}
         {--execute : Actually delete abandoned workspaces (default is a plan only)}
+        {--restore= : Exact resolved restore UUID whose retained workspace may be cleaned}
         {--json : Output machine-readable JSON}';
 
     protected $description = 'Plan (default) or execute removal of abandoned operation workspaces. Active workspaces are never removed.';
 
-    public function handle(WorkspaceManager $workspaces): int
+    public function handle(WorkspaceManager $workspaces, RestoreJournalStore $journals): int
     {
         try {
+            $restoreUuid = $this->option('restore');
+            if (is_string($restoreUuid) && $restoreUuid !== '') {
+                $matches = array_values(array_filter($workspaces->retainedRestores(), static fn (array $row): bool => $row['restore_uuid'] === $restoreUuid));
+                $execute = (bool) $this->option('execute');
+                $report = $execute ? $workspaces->cleanupRestore($restoreUuid, $journals) : null;
+                if ($this->wantsJson()) {
+                    $this->writeJson(['ok' => $report?->succeeded() ?? true, 'mode' => $execute ? 'execute' : 'plan', 'restore_uuid' => $restoreUuid, 'workspaces' => $matches, 'result' => $report === null ? null : ['removed' => $report->removed, 'errors' => $report->errors]]);
+                } else {
+                    if ($report === null) {
+                        $this->line(sprintf('PLAN ONLY: %d retained workspace(s) for restore %s.', count($matches), $restoreUuid));
+                    } else {
+                        $this->line($report->succeeded() ? 'Restore workspace removed.' : 'Restore workspace cleanup refused: '.implode(' ', $report->errors));
+                    }
+                }
+
+                return $report?->succeeded() === false ? self::FAILURE : self::SUCCESS;
+            }
             $hours = $this->abandonmentHours();
             $candidates = $workspaces->abandoned($hours * 3600);
             $execute = (bool) $this->option('execute');

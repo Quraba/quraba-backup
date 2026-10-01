@@ -239,6 +239,17 @@ final class PhaseSixSevenTest extends TestCase
         self::assertNull($result['archive_verified']);
     }
 
+    public function test_explicit_exact_database_policy_blocks_an_incomplete_source(): void
+    {
+        $backup = $this->manager()->run(BackupProfile::Database)->run;
+        $this->config()->set('quraba-backup.restore.require_complete_database', true);
+
+        $result = $this->restore($backup->uuid, 'database');
+        self::assertFalse($result['ok']);
+        self::assertFalse($result['database_exact_object_completeness']);
+        self::assertContains('The source archive does not prove complete database object protection required by restore.require_complete_database.', $result['blockers']);
+    }
+
     public function test_atomic_rename_probe_failure_blocks_media_restore_on_posix(): void
     {
         if (PHP_OS_FAMILY === 'Windows') {
@@ -246,7 +257,7 @@ final class PhaseSixSevenTest extends TestCase
         }
 
         $backup = $this->manager()->run(BackupProfile::Media)->run;
-        $parent = dirname($this->mediaRoot.'/uploads');
+        $parent = dirname($this->mediaRoot);
         $originalMode = fileperms($parent) & 0777;
         chmod($parent, 0500);
         if (is_writable($parent)) {

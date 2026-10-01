@@ -10,6 +10,8 @@ use Quraba\Backup\Domain\FailureDetails;
 use Quraba\Backup\Enums\MaintenanceOperation;
 use Quraba\Backup\Enums\MaintenanceStatus;
 use Quraba\Backup\Models\BackupMaintenanceRun;
+use Quraba\Backup\Notifications\NoticeDispatcher;
+use Quraba\Backup\Notifications\OperationalNotice;
 use Quraba\Backup\Restic\RepositoryIdentityGuard;
 use Quraba\Backup\Restic\ResticResult;
 use Quraba\Backup\Restic\ResticRunner;
@@ -37,6 +39,7 @@ final readonly class ResticMaintenanceService
         private ResticRunner $runner,
         private RepositoryIdentityGuard $repositoryIdentity,
         private SecretRedactor $redactor,
+        private NoticeDispatcher $notices,
     ) {}
 
     public function check(bool $readData): MaintenanceOutcome
@@ -80,6 +83,12 @@ final readonly class ResticMaintenanceService
                     $audit->markIndeterminate($failure);
                 } else {
                     $audit->markFailed($failure);
+                }
+                if ($operation === MaintenanceOperation::ResticCheck) {
+                    $this->notices->emit(new OperationalNotice('integrity.failed', $audit->uuid, ['failure_code' => $failure->code]));
+                }
+                if (str_contains($failure->code, 'identity')) {
+                    $this->notices->emit(new OperationalNotice('repository.identity_mismatch', $audit->uuid, ['failure_code' => $failure->code]));
                 }
 
                 return new MaintenanceOutcome($audit->uuid, $operation, $dryRun, $mode, $uncertain ? MaintenanceStatus::Indeterminate : MaintenanceStatus::Failed, isset($summary) ? $summary : [], $failure);

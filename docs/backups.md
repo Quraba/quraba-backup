@@ -57,6 +57,9 @@ creates no run.
 `quraba-backup.json` (inside the archive) holds only safe metadata: schema version, run/app/environment,
 UTC creation time, package/Laravel/PHP versions, database driver/flavor/server version, migration and
 schema fingerprints, and a SHA-256 fingerprint of APP_KEY — never APP_KEY, passwords or `.env` values.
+It also records event policy, proven object-class coverage and an explicit exact-completeness flag. Missing
+EVENT or object-visibility grants leave the flag false; a completed Recovery Point does not silently imply
+exact database object coverage.
 
 **Media snapshot**
 

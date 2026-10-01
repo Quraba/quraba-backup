@@ -32,6 +32,7 @@ use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Tests\Support\FlakyObjectStorage;
 use Quraba\Backup\Tests\Support\RunsLiveRestores;
 use Quraba\Backup\Tests\TestCase;
+use Quraba\Backup\Workspace\WorkspaceManager;
 
 /**
  * The two things that must hold BEFORE the destructive boundary: a
@@ -244,6 +245,18 @@ final class LiveRestoreSafetyAndJournalTest extends TestCase
         self::assertSame('clear_starting', $journal->databaseState());
         self::assertTrue($journal->isUnresolved());
         self::assertTrue($this->quiescenceProvider->active);
+        $retained = $this->app->make(WorkspaceManager::class);
+        self::assertCount(1, $retained->retainedRestores());
+        $kept = $report['workspace_kept'];
+        self::assertIsString($kept);
+        self::assertDirectoryExists($kept);
+        self::assertFalse($retained->cleanupRestore($report['restore_uuid'], $this->app->make(RestoreJournalStore::class))->succeeded());
+        self::assertDirectoryExists($kept);
+
+        $store = $this->app->make(RestoreJournalStore::class);
+        $store->save($journal->withResolution(RestoreJournal::RESOLUTION_ABANDONED, ['reason' => 'test operator decision']));
+        self::assertTrue($retained->cleanupRestore($report['restore_uuid'], $store)->succeeded());
+        self::assertDirectoryDoesNotExist($kept);
     }
 
     public function test_journal_store_is_forward_only_private_and_refuses_tampering(): void

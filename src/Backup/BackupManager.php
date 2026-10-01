@@ -86,6 +86,31 @@ final readonly class BackupManager
         }
     }
 
+    /** Execute a web-requested catalog row only after claiming the global operation lock. */
+    public function runPending(string $uuid): BackupRunResult
+    {
+        $locks = $this->coordinator->beginWriteOperation('pending backup '.$uuid);
+
+        try {
+            $run = BackupRun::query()->where('uuid', $uuid)->firstOrFail();
+            if ($run->status !== BackupStatus::Pending || $run->trigger !== BackupTrigger::Api) {
+                throw new InvalidArgumentException('The backup request is no longer pending.');
+            }
+
+            try {
+                $identity = $this->identities->current();
+            } catch (Throwable $exception) {
+                $run->markFailed(FailureDetails::fromThrowable($exception, 'preflight', $this->redactor));
+
+                return new BackupRunResult($run->refresh(), BackupStatus::Failed, [], [], null);
+            }
+
+            return $this->execute($run, $identity);
+        } finally {
+            $locks->release();
+        }
+    }
+
     /**
      * The verified pre-change safety backup of a LIVE restore.
      *

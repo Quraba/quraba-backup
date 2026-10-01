@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Quraba\Backup\Health\Doctor\Checks;
 
 use Composer\InstalledVersions;
+use Filament\Panel;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Container\Container;
 use Quraba\Backup\Archive\SpatieArchiveEngine;
@@ -55,7 +56,19 @@ final readonly class BackupReadinessChecks implements DoctorCheck
             $this->workspaceDisk(),
             $this->consistency(),
             $this->schedule(),
+            $this->filament(),
         ];
+    }
+
+    private function filament(): CheckResult
+    {
+        if (! (bool) $this->config->get('quraba-backup.filament.pending_enabled', false)) {
+            return CheckResult::skip('backup.filament', 'Filament panel', 'Optional admin integration is disabled.');
+        }
+
+        return class_exists(Panel::class)
+            ? CheckResult::pass('backup.filament', 'Filament panel', 'Filament is installed; register QurabaBackupPlugin on the host panel.')
+            : CheckResult::fail('backup.filament', 'Filament panel', 'Pending panel requests are enabled but Filament is not installed.');
     }
 
     private function spatie(): CheckResult

@@ -15,6 +15,8 @@ use Quraba\Backup\Manifest\ManifestBuilder;
 use Quraba\Backup\Manifest\ManifestStore;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupRun;
+use Quraba\Backup\Notifications\NoticeDispatcher;
+use Quraba\Backup\Notifications\OperationalNotice;
 use Quraba\Backup\Security\SecretRedactor;
 use Throwable;
 
@@ -37,6 +39,7 @@ final readonly class RunFinalizer
     public function __construct(
         private ManifestStore $manifests,
         private SecretRedactor $redactor,
+        private NoticeDispatcher $notices,
     ) {}
 
     /**
@@ -149,6 +152,8 @@ final readonly class RunFinalizer
         if ($run->status === BackupStatus::Indeterminate) {
             $run->resolveIndeterminate($status, $evidence === [] ? ['finalized_by' => 'backup_manager'] : $evidence, $status === BackupStatus::Completed ? null : $failure);
 
+            $this->notice($run, $status, $failure);
+
             return;
         }
 
@@ -157,13 +162,26 @@ final readonly class RunFinalizer
             BackupStatus::Partial => $run->markPartial($failure ?? $this->failure('backup.partial', 'finalize', 'At least one required component is missing.')),
             default => $run->markFailed($failure ?? $this->failure('backup.failed', 'finalize', 'The backup failed.')),
         };
+        $this->notice($run, $status, $failure);
     }
 
     private function toIndeterminate(BackupRun $run, FailureDetails $failure): void
     {
         if ($run->status !== BackupStatus::Indeterminate) {
             $run->markIndeterminate($failure);
+            $this->notice($run, BackupStatus::Indeterminate, $failure);
         }
+    }
+
+    private function notice(BackupRun $run, BackupStatus $status, ?FailureDetails $failure): void
+    {
+        if ($status === BackupStatus::Completed) {
+            return;
+        }
+        $this->notices->emit(new OperationalNotice('backup.'.$status->value, $run->uuid, [
+            'profile' => $run->profile->value,
+            'failure_code' => $failure?->code,
+        ]));
     }
 
     private function failure(string $code, string $stage, string $message): FailureDetails

@@ -80,6 +80,16 @@ final readonly class RestorePreparation
             $report['archive_sha256'] = $archive['archive_sha256'];
             $report['app_key_compatibility'] = $archive['app_key_compatibility'];
             $report['release_compatibility'] = $archive['release_compatibility'];
+            $databaseMetadata = $archive['metadata']['database'] ?? [];
+            $eventsIncluded = is_array($databaseMetadata) && ($databaseMetadata['events_included'] ?? null) === true;
+            $report['database_events_included'] = $eventsIncluded;
+            $report['database_exact_object_completeness'] = is_array($databaseMetadata) && ($databaseMetadata['exact_object_completeness'] ?? null) === true;
+            if (! $eventsIncluded) {
+                $report['warnings'] = [...self::strings($report['warnings']), 'The source archive does not prove scheduled events were included. Exact replacement may omit them.'];
+            }
+            if ((bool) $this->config->get('quraba-backup.restore.require_complete_database', false) && ! $report['database_exact_object_completeness']) {
+                $blockers[] = 'The source archive does not prove complete database object protection required by restore.require_complete_database.';
+            }
 
             if ($archive['release_compatibility'] === 'warning') {
                 $report['warnings'] = [...self::strings($report['warnings']), 'The backup release fingerprint differs from this installation; review compatibility before relying on the restored application.'];

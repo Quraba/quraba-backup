@@ -377,7 +377,7 @@ final class CleanHostRecoveryTest extends TestCase
         $archive = $adopted->artifacts->firstWhere('kind', ArtifactKind::ApplicationArchive);
         self::assertSame(ArtifactStatus::Verified, $archive->status);
         self::assertSame($database->artifacts()->getModel()->getTable(), 'quraba_backup_artifacts');
-        self::assertStringContainsString('not re-hashed', $archive->metadata['verification']);
+        self::assertStringContainsString('physical remote stream size and SHA-256', $archive->metadata['verification']);
         self::assertSame(ArtifactStatus::Verified, $adopted->artifacts->firstWhere('kind', ArtifactKind::RemoteManifest)->status);
 
         // The run whose snapshot is gone is NOT adopted as a Recovery Point.
@@ -400,6 +400,36 @@ final class CleanHostRecoveryTest extends TestCase
         $again = $this->runJson('quraba:backup:catalog:rebuild', ['--apply' => true]);
         self::assertSame([], $again['applied']);
         self::assertSame(2, BackupMaintenanceRun::query()->where('operation', 'catalog_rebuild')->where('status', 'completed')->count());
+    }
+
+    public function test_catalog_rebuild_rejects_same_sized_remote_archive_corruption(): void
+    {
+        $run = $this->manager()->run(BackupProfile::Database)->run;
+        $locator = $run->artifacts()->where('kind', 'application_archive')->value('locator');
+        self::assertIsString($locator);
+        $path = $this->bucketPath($locator);
+        $handle = fopen($path, 'r+b');
+        self::assertIsResource($handle);
+        try {
+            $first = fread($handle, 1);
+            self::assertIsString($first);
+            rewind($handle);
+            fwrite($handle, chr(ord($first) ^ 0xFF));
+        } finally {
+            fclose($handle);
+        }
+
+        BackupArtifact::query()->delete();
+        BackupRun::query()->delete();
+
+        $plan = $this->runJson('quraba:backup:catalog:rebuild', []);
+        $row = array_values(array_filter($plan['runs'], static fn (array $candidate): bool => $candidate['run_uuid'] === $run->uuid))[0];
+        self::assertSame('hash_mismatch', $row['components']['application_archive']);
+        self::assertSame('skip_nothing_present', $row['action']);
+
+        $applied = $this->runJson('quraba:backup:catalog:rebuild', ['--apply' => true]);
+        self::assertSame([], $applied['applied']);
+        self::assertNull(BackupRun::query()->where('uuid', $run->uuid)->first());
     }
 
     public function test_catalog_rebuild_respects_expiry_records_stale_rows_and_repository_identity(): void

@@ -18,5 +18,11 @@ final readonly class DatabaseDump
         public string $serverVersion,
         public string $tool,
         public string $toolVersion,
+        public string $eventPolicy = 'unknown',
+        public bool $eventsIncluded = false,
+        public bool $routinesIncluded = false,
+        public bool $eventPrivilegeProven = false,
+        /** @var array{tables: bool, views: bool, triggers: bool, routines: bool} */
+        public array $objectPrivilegesProven = ['tables' => false, 'views' => false, 'triggers' => false, 'routines' => false],
     ) {}
 }

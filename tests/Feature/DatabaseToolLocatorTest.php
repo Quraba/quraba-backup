@@ -69,6 +69,8 @@ final class DatabaseToolLocatorTest extends TestCase
         $this->fakeTool($directory, 'mariadb-dump', 'mariadb-dump Ver 10.11');
         $this->fakeTool($directory, 'mysqldump', 'mysqldump Ver 8.4');
         $this->config()->set('quraba-backup.database.tool_search_paths', [$directory]);
+        $this->config()->set('quraba-backup.database.dump_binary', null);
+        $this->config()->set('quraba-backup.database.client_binary', null);
         $originalPath = (string) getenv('PATH');
         putenv('PATH='.$directory);
 

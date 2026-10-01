@@ -20,10 +20,11 @@ Every package error carries a machine-readable code in brackets, e.g. `[restic.w
 | `process.launch_failed` | A binary could not be executed (missing, not executable, wrong architecture, `proc_open` disabled). |
 | Doctor: "Password file … accessible by other users" | `chmod 600` the password file. |
 | Doctor: "second process acquired a lock" | The lock directory is on a filesystem without working `flock` (e.g. some NFS mounts). Move it. |
-| Abandoned workspaces | `php artisan quraba:backup:workspace:list`, then `quraba:backup:workspace:cleanup --execute`. Active workspaces are never removed. |
+| Abandoned workspaces | `php artisan quraba:backup:workspace:list`, then `quraba:backup:workspace:cleanup --execute`. Active workspaces are never removed. A retained restore workspace requires journal resolution and `workspace:cleanup --restore=UUID --execute`. |
 | `archive.password_missing` | `QURABA_BACKUP_ARCHIVE_PASSWORD` is missing or blank. Archives contain `.env` and are never created unencrypted. |
 | `archive.encryption_unsupported` | This PHP/libzip build lacks AES-256 ZIP encryption. Use a PHP build with a current libzip. |
 | `archive.database_dump_failed` | The dump tool failed or is missing (see the redacted message); check `quraba:backup:doctor`. |
+| Doctor: EVENT privilege not proven | Default event policy records the backup as incomplete; grant EVENT on the application database or choose the explicit `assume_none` policy. `required` refuses the backup. |
 | `archive.verification_failed` | The archive failed its checks (entries, AES-256, password, metadata). Nothing was uploaded. |
 | `archive.upload_failed` | B2 did not accept or prove the upload. If the outcome is unknown the run is `indeterminate`; run `quraba:backup:reconcile`. |
 | `archive.collision` | A different object already exists at this run's archive path. It is never overwritten; investigate the bucket. |

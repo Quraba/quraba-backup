@@ -9,6 +9,7 @@ use PDO;
 use PHPUnit\Framework\Attributes\Group;
 use Quraba\Backup\Archive\ArchiveRequest;
 use Quraba\Backup\Archive\ArchiveVerifier;
+use Quraba\Backup\Archive\Database\MySqlDatabaseDumper;
 use Quraba\Backup\Contracts\ArchiveEngine;
 use Quraba\Backup\Contracts\DatabaseDumper;
 use Quraba\Backup\Database\DumpSchemaFingerprinter;
@@ -92,6 +93,11 @@ final class RealDatabaseArchiveTest extends TestCase
 
     public function test_real_dump_is_archived_encrypted_and_verified(): void
     {
+        DB::connection('it_mysql')->statement('CREATE VIEW order_notes AS SELECT id, note FROM orders');
+        DB::connection('it_mysql')->statement('CREATE TRIGGER orders_note_before_insert BEFORE INSERT ON orders FOR EACH ROW SET NEW.note = COALESCE(NEW.note, \'missing\')');
+        DB::connection('it_mysql')->statement('CREATE PROCEDURE count_orders() SELECT COUNT(*) FROM orders');
+        DB::connection('it_mysql')->statement('CREATE EVENT backup_event_probe ON SCHEDULE AT CURRENT_TIMESTAMP + INTERVAL 1 DAY DO INSERT INTO orders (id, note) VALUES (999, \'event\')');
+        self::assertTrue($this->app->make(MySqlDatabaseDumper::class)->hasEventPrivilege('it_mysql', $this->database));
         $run = '5ff081a8-503e-44ba-91ae-30cfef9b972f';
         $identity = $this->app->make(IdentityResolver::class)->current();
         $workspace = $this->app->make(WorkspaceManager::class)->create();
@@ -108,6 +114,9 @@ final class RealDatabaseArchiveTest extends TestCase
                 self::assertSame($expectedFlavor, $verified->metadata['database']['flavor']);
             }
             self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', (string) $verified->metadata['database']['schema_fingerprint']);
+            self::assertTrue($verified->metadata['database']['events_included']);
+            self::assertSame(['tables' => true, 'views' => true, 'triggers' => true, 'routines' => true], $verified->metadata['database']['object_privileges_proven']);
+            self::assertSame($verified->metadata['database']['flavor'] !== 'mariadb' || $verified->metadata['database']['dump_tool'] === 'mariadb-dump', $verified->metadata['database']['exact_object_completeness']);
 
             $zip = new ZipArchive;
             $zip->open($created->path);
@@ -117,6 +126,9 @@ final class RealDatabaseArchiveTest extends TestCase
 
             self::assertStringContainsString('CREATE TABLE `orders`', $sql);
             self::assertStringContainsString('first-order-row', $sql);
+            foreach (['order_notes', 'orders_note_before_insert', 'count_orders', 'backup_event_probe'] as $object) {
+                self::assertStringContainsString($object, $sql);
+            }
             self::assertSame([], glob($workspace->root().'/database/*.cnf') ?: [], 'The credentials option file is removed immediately.');
         } finally {
             $workspace->cleanup();

@@ -40,8 +40,8 @@ use Throwable;
  * than the backups that exist remotely.
  *
  * Inputs: valid immutable manifests of this application and environment,
- * retention expiry records, the physical existence of every archive object
- * (present with the exact recorded size), the application-scoped Restic
+ * retention expiry records, the physical existence, size and SHA-256 of every
+ * archive object, the application-scoped Restic
  * snapshot listing (exact ID with this run's tags) and the repository
  * identity.
  *
@@ -221,7 +221,28 @@ final readonly class CatalogRebuilder
             return 'missing';
         }
 
-        return $objects->size($locator) === $manifest->archiveBytes ? 'verified' : 'size_mismatch';
+        if ($objects->size($locator) !== $manifest->archiveBytes) {
+            return 'size_mismatch';
+        }
+
+        // Hash the remote stream directly. This keeps memory bounded even for
+        // large archives and detects same-sized corruption or replacement.
+        try {
+            $stream = $objects->readStream($locator);
+            try {
+                $hash = hash_init('sha256');
+                $bytes = hash_update_stream($hash, $stream);
+                if ($bytes !== $manifest->archiveBytes) {
+                    return 'size_mismatch';
+                }
+
+                return hash_equals((string) $manifest->archiveSha256, hash_final($hash)) ? 'verified' : 'hash_mismatch';
+            } finally {
+                fclose($stream);
+            }
+        } catch (Throwable) {
+            return 'hash_unavailable';
+        }
     }
 
     /**
@@ -283,6 +304,14 @@ final readonly class CatalogRebuilder
         $runUuid = is_string($plan['run_uuid']) ? $plan['run_uuid'] : '';
         $manifest = $this->manifests->find($identity, $runUuid) ?? throw RestoreFailed::sourceUnavailable('a manifest disappeared during the rebuild');
         $components = is_array($plan['components']) ? $plan['components'] : [];
+        if (($components['application_archive'] ?? null) === 'verified') {
+            // The object may have changed after planning; check again at the
+            // point at which a VERIFIED catalog row would be written.
+            $components['application_archive'] = $this->archiveState($manifest, null);
+        }
+        if (! in_array('verified', $components, true)) {
+            return ['run_uuid' => $runUuid, 'action' => 'skipped_changed', 'components' => $components];
+        }
         $now = CarbonImmutable::now('UTC')->toIso8601ZuluString();
 
         $run = BackupRun::adopt($manifest->runUuid, $manifest->profile, $manifest->trigger, $manifest->consistency, $manifest->createdAt, [
@@ -290,6 +319,7 @@ final readonly class CatalogRebuilder
             'app_id' => $manifest->appId,
             'environment' => $manifest->environment,
             'restic_repository_id' => $manifest->repositoryId,
+            'database' => ['events_included' => $manifest->databaseEventsIncluded, 'exact_object_completeness' => $manifest->databaseExact],
             'catalog_rebuilt' => ['at' => $now, 'manifest' => $manifest->locator, 'components' => $components],
         ]);
 
@@ -312,7 +342,7 @@ final readonly class CatalogRebuilder
             if ($kind === ArtifactKind::ApplicationArchive) {
                 $artifact->markVerifiedObject((string) $manifest->archiveLocator, (string) $manifest->archiveSha256, (int) $manifest->archiveBytes, [
                     'adopted' => true,
-                    'verification' => $state === 'verified' ? 'object present with the exact recorded size; SHA-256 taken from the immutable manifest (not re-hashed)' : 'recorded as expired by retention',
+                    'verification' => $state === 'verified' ? 'physical remote stream size and SHA-256 match the immutable manifest' : 'recorded as expired by retention',
                 ]);
             } else {
                 $artifact->markVerifiedSnapshot((string) $manifest->snapshotId, [

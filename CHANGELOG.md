@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — v1 hardening (not tagged)
+
+- Catalog rebuild now streams each remote archive and requires its physical SHA-256 and exact byte count
+  to match the immutable manifest, including a second check immediately before adoption.
+- Database dumps record event policy, proven EVENT privilege, included object classes and exact object
+  completeness. Exactness also requires direct grant proof for tables, views, triggers and routines. The
+  default `auto` mode includes events when a direct grant proves capability; `required`
+  fails closed, and `assume_none` explicitly records incomplete protection. Doctor, health, manifests and
+  restore reports expose the decision.
+- Indeterminate restore workspaces are marked with the exact restore UUID. Age-based cleanup refuses them;
+  `workspace:cleanup --restore=UUID --execute` is permitted only after journal resolution.
+- Restore journal writes now serialize per UUID through private file locks, reject an unsafe journal
+  directory and treat failed directory sync as a durability failure.
+- Optional package events, callback/Laravel Notification delivery and persistent health transition
+  deduplication were added. Delivery failures do not change operation outcomes.
+- Optional Filament 5 plugin adds a health dashboard, paginated run history, safe details, explicit
+  authorization, scheduler-backed backup requests, restore dry runs and read-only retention planning.
+- Added an explicitly opt-in real B2 disposable-prefix lifecycle test. It has not been run without test
+  credentials; v1 release readiness still requires that result and green Linux CI.
+
+Supported target: PHP 8.5, Laravel 13, Linux, MySQL 8.4 or MariaDB 11.4, Restic 0.19.1 and Backblaze B2
+S3 API. Live restore remains CLI-only and requires exact run UUID, quiescence, a verified safety backup
+unless the target is proven empty, a durable journal and explicit confirmation.
+
 ## Unreleased — Live restore and disaster recovery
 
 ### Changed
@@ -39,9 +63,6 @@
 - Configuration: `restore.rewrite_definers`, `timeouts.database_import`, `database.dump_events`,
   `restic.media.roots.{name}.staging`.
 - Documentation: `docs/restore.md`, `docs/disaster-recovery.md`.
-
-### Not yet implemented
-Filament UI.
 
 ## Unreleased — Backups (master plan phases 3–5)
 

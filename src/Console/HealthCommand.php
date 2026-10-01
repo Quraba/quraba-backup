@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Quraba\Backup\Console;
 
 use Quraba\Backup\Health\BackupHealthService;
+use Quraba\Backup\Notifications\NoticeDispatcher;
 use Throwable;
 
 final class HealthCommand extends PackageCommand
@@ -14,10 +15,11 @@ final class HealthCommand extends PackageCommand
 
     protected $description = 'Report recovery health using catalog freshness and cheap physical samples.';
 
-    public function handle(BackupHealthService $health): int
+    public function handle(BackupHealthService $health, NoticeDispatcher $notices): int
     {
         try {
             $report = $health->check();
+            $notices->healthTransition($report);
         } catch (Throwable $exception) {
             return $this->failWith($exception);
         }

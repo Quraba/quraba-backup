@@ -61,6 +61,22 @@ final readonly class ArchiveMetadata
                 'migration_fingerprint' => $this->migrationFingerprint($dump->connection),
                 'schema_fingerprint' => $this->schemaFingerprint($dump->connection),
                 'dump_schema_fingerprint' => DumpSchemaFingerprinter::fingerprint($dump->path),
+                'event_policy' => $dump->eventPolicy,
+                'event_privilege_proven' => $dump->eventPrivilegeProven,
+                'events_included' => $dump->eventsIncluded,
+                'object_privileges_proven' => $dump->objectPrivilegesProven,
+                'object_classes' => [
+                    'tables' => $dump->objectPrivilegesProven['tables'],
+                    'views' => $dump->objectPrivilegesProven['views'],
+                    'triggers' => $dump->objectPrivilegesProven['triggers'],
+                    'routines' => $dump->routinesIncluded && $dump->objectPrivilegesProven['routines'],
+                    'events' => $dump->eventsIncluded,
+                    'sequences' => $dump->flavor->value === 'mariadb' ? ($dump->tool === 'mariadb-dump' && $dump->objectPrivilegesProven['tables'] ? 'dumped_as_tables' : 'unknown') : 'not_applicable',
+                ],
+                'exact_object_completeness' => $dump->eventsIncluded && $dump->routinesIncluded
+                    && $dump->objectPrivilegesProven['tables'] && $dump->objectPrivilegesProven['views']
+                    && $dump->objectPrivilegesProven['triggers'] && $dump->objectPrivilegesProven['routines']
+                    && ($dump->flavor->value !== 'mariadb' || $dump->tool === 'mariadb-dump'),
             ],
             'app_key_fingerprint' => is_string($appKey) && $appKey !== '' ? 'sha256:'.hash('sha256', $appKey) : null,
             'contents' => array_values(array_filter([

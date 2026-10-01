@@ -6,6 +6,7 @@ namespace Quraba\Backup\Health\Doctor\Checks;
 
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\DatabaseManager;
+use Quraba\Backup\Archive\Database\MySqlDatabaseDumper;
 use Quraba\Backup\Database\DatabaseToolKind;
 use Quraba\Backup\Database\DatabaseToolLocator;
 use Quraba\Backup\Database\ServerFlavor;
@@ -26,6 +27,7 @@ final readonly class DatabaseChecks implements DoctorCheck
         private Repository $config,
         private DatabaseManager $database,
         private DatabaseToolLocator $tools,
+        private MySqlDatabaseDumper $dumper,
     ) {}
 
     public function name(): string
@@ -63,8 +65,10 @@ final readonly class DatabaseChecks implements DoctorCheck
                 $flavor = ServerFlavor::fromVersionString($version);
 
                 $results[] = CheckResult::pass('database.connection', 'Database connection', sprintf('Connected; server reports %s (%s).', $version, $flavor->value), ['server_version' => $version, 'flavor' => $flavor->value]);
+                $results[] = $this->events($connection);
+                $results[] = $this->objectPrivileges($connection);
             } catch (Throwable $exception) {
-                $results[] = CheckResult::fail('database.connection', 'Database connection', 'Could not connect to the application database: '.$exception->getMessage());
+                $results[] = CheckResult::fail('database.connection', 'Database connection', 'Could not connect to the application database; check the configured credentials and network.');
             }
         }
 
@@ -73,6 +77,52 @@ final readonly class DatabaseChecks implements DoctorCheck
         }
 
         return $results;
+    }
+
+    private function events(string $connection): CheckResult
+    {
+        $policy = $this->config->get('quraba-backup.database.event_policy', 'auto');
+        if ((bool) $this->config->get('quraba-backup.database.dump_events', false)) {
+            $policy = 'required';
+        }
+        if (! is_string($policy) || ! in_array($policy, ['auto', 'required', 'assume_none'], true)) {
+            return CheckResult::fail('database.events', 'Scheduled event protection', 'Invalid database.event_policy.');
+        }
+
+        try {
+            $name = $this->database->connection($connection)->getDatabaseName();
+            $rows = $this->database->connection($connection)->select('SHOW GRANTS');
+            foreach ($rows as $row) {
+                foreach ((array) $row as $grant) {
+                    if (is_string($grant) && MySqlDatabaseDumper::grantIncludesEvents($grant, $name)) {
+                        return $policy === 'assume_none'
+                            ? CheckResult::warn('database.events', 'Scheduled event protection', 'EVENT privilege is available, but event_policy=assume_none opts out of including events.')
+                            : CheckResult::pass('database.events', 'Scheduled event protection', 'EVENT privilege is proven; scheduled events will be included.');
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // An unreadable grant list cannot prove completeness.
+        }
+
+        return $policy === 'required'
+            ? CheckResult::fail('database.events', 'Scheduled event protection', 'EVENT privilege cannot be proven; required policy will block database backups.')
+            : CheckResult::warn('database.events', 'Scheduled event protection', 'EVENT privilege cannot be proven. Database backups will be marked incomplete unless this is explicitly addressed.');
+    }
+
+    private function objectPrivileges(string $connection): CheckResult
+    {
+        $database = $this->database->connection($connection)->getDatabaseName();
+        $proof = $this->dumper->objectPrivileges($connection, $database);
+        $missing = array_keys(array_filter($proof, static fn (bool $proven): bool => ! $proven));
+
+        if (! (bool) $this->config->get('quraba-backup.database.dump_routines', true)) {
+            $missing[] = 'routines disabled by configuration';
+        }
+
+        return $missing === []
+            ? CheckResult::pass('database.object_privileges', 'Database object privileges', 'SELECT, SHOW VIEW, TRIGGER and routine visibility are proven by direct grants.')
+            : CheckResult::warn('database.object_privileges', 'Database object privileges', 'Could not prove complete dump capability for: '.implode(', ', $missing).'. Dumps will not claim exact object completeness.');
     }
 
     private function tool(DatabaseToolKind $kind, ServerFlavor $flavor): CheckResult

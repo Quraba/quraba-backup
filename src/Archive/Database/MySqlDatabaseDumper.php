@@ -123,11 +123,25 @@ final readonly class MySqlDatabaseDumper implements DatabaseDumper
             $dumper->setSocket($config['unix_socket']);
         }
 
-        if ((bool) $this->config->get('quraba-backup.database.dump_routines', true)) {
+        $routinesIncluded = (bool) $this->config->get('quraba-backup.database.dump_routines', true);
+        if ($routinesIncluded) {
             $dumper->includeRoutines();
         }
 
+        $eventPolicy = $this->config->get('quraba-backup.database.event_policy', 'auto');
+        if (! is_string($eventPolicy) || ! in_array($eventPolicy, ['auto', 'required', 'assume_none'], true)) {
+            throw ArchiveCreationFailed::databaseDumpFailed('database.event_policy must be auto, required or assume_none');
+        }
         if ((bool) $this->config->get('quraba-backup.database.dump_events', false)) {
+            $eventPolicy = 'required';
+        }
+        $eventPrivilege = $this->hasEventPrivilege($connection, $database);
+        $objectPrivileges = $this->objectPrivileges($connection, $database);
+        if ($eventPolicy === 'required' && ! $eventPrivilege) {
+            throw ArchiveCreationFailed::databaseDumpFailed('EVENT privilege could not be proven for the database; use event_policy=assume_none only after an explicit operator decision');
+        }
+        $eventsIncluded = $eventPolicy !== 'assume_none' && $eventPrivilege;
+        if ($eventsIncluded) {
             $dumper->withEvents();
         }
 
@@ -145,7 +159,76 @@ final readonly class MySqlDatabaseDumper implements DatabaseDumper
 
         $bytes = (int) filesize($path);
 
-        return new DatabaseDump($path, $bytes, $connection, $driver, $database, $flavor, $serverVersion, $tool->name, $tool->version);
+        return new DatabaseDump($path, $bytes, $connection, $driver, $database, $flavor, $serverVersion, $tool->name, $tool->version, $eventPolicy, $eventsIncluded, $routinesIncluded, $eventPrivilege, $objectPrivileges);
+    }
+
+    public function hasEventPrivilege(string $connection, string $database): bool
+    {
+        try {
+            $rows = $this->database->connection($connection)->select('SHOW GRANTS');
+            foreach ($rows as $row) {
+                foreach ((array) $row as $statement) {
+                    if (is_string($statement) && self::grantIncludesEvents($statement, $database)) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable) {
+            // Unknown capability is never treated as proof.
+        }
+
+        return false;
+    }
+
+    public static function grantIncludesEvents(string $statement, string $database): bool
+    {
+        return self::grantIncludesPrivilege($statement, $database, 'EVENT');
+    }
+
+    public static function grantIncludesPrivilege(string $statement, string $database, string $privilege, bool $globalOnly = false): bool
+    {
+        if (preg_match('/^GRANT\s+(.+?)\s+ON\s+(.+?)\s+TO\s+/i', $statement, $matches) !== 1) {
+            return false;
+        }
+        $scope = str_replace('`', '', $matches[2]);
+        if ($scope !== '*.*' && ($globalOnly || $scope !== $database.'.*')) {
+            return false;
+        }
+
+        $grants = strtoupper(str_replace('_', ' ', $matches[1]));
+
+        return preg_match('/\bALL(?:\s+PRIVILEGES)?\b/', $grants) === 1
+            || preg_match('/(?:^|,)\s*'.preg_quote(strtoupper(str_replace('_', ' ', $privilege)), '/').'\s*(?:,|$)/', $grants) === 1;
+    }
+
+    /** @return array{tables: bool, views: bool, triggers: bool, routines: bool} */
+    public function objectPrivileges(string $connection, string $database): array
+    {
+        $proof = ['tables' => false, 'views' => false, 'triggers' => false, 'routines' => false];
+
+        try {
+            foreach ($this->database->connection($connection)->select('SHOW GRANTS') as $row) {
+                foreach ((array) $row as $statement) {
+                    if (! is_string($statement)) {
+                        continue;
+                    }
+                    $select = self::grantIncludesPrivilege($statement, $database, 'SELECT');
+                    $proof['tables'] = $proof['tables'] || $select;
+                    $proof['views'] = $proof['views'] || self::grantIncludesPrivilege($statement, $database, 'SHOW VIEW');
+                    $proof['triggers'] = $proof['triggers'] || self::grantIncludesPrivilege($statement, $database, 'TRIGGER');
+                    // SHOW_ROUTINE is a global dynamic privilege in MySQL.
+                    // Database-scoped ALL alone is not proof across engines.
+                    $proof['routines'] = $proof['routines'] || self::grantIncludesPrivilege($statement, $database, 'SHOW ROUTINE', true)
+                        || self::grantIncludesPrivilege($statement, $database, 'ALL', true);
+                }
+            }
+        } catch (Throwable) {
+            // No grant evidence means no exact-completeness claim.
+        }
+
+        $proof['views'] = $proof['views'] && $proof['tables'];
+
+        return $proof;
     }
 
     private function serverVersion(string $connection): string

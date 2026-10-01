@@ -7,10 +7,13 @@ namespace Quraba\Backup\Workspace;
 use Carbon\CarbonImmutable;
 use InvalidArgumentException;
 use Psr\Log\LoggerInterface;
+use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Exceptions\ConfigurationException;
 use Quraba\Backup\Exceptions\WorkspaceViolation;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\PathGuard;
+use Quraba\Backup\Support\PrivateFile;
 use Symfony\Component\Uid\Ulid;
 use Throwable;
 
@@ -23,6 +26,8 @@ use Throwable;
  */
 final readonly class WorkspaceManager
 {
+    private const string RESTORE_MARKER = '.restore-uuid';
+
     public const string DIRECTORY_PREFIX = 'op-';
 
     public const string DIRECTORY_PATTERN = '/^op-[0-9A-HJKMNP-TV-Z]{26}$/';
@@ -185,13 +190,67 @@ final readonly class WorkspaceManager
         return $reports;
     }
 
+    public function markRestore(OperationWorkspace $workspace, string $restoreUuid): void
+    {
+        $restoreUuid = Identifiers::assertUuid($restoreUuid, 'The restore UUID');
+        $path = $workspace->root().'/'.self::RESTORE_MARKER;
+        $handle = PrivateFile::create($path);
+        try {
+            if (fwrite($handle, $restoreUuid."\n") !== strlen($restoreUuid) + 1 || ! fflush($handle) || ! fsync($handle)) {
+                throw new WorkspaceViolation('The restore workspace marker could not be written durably.');
+            }
+            PrivateFile::assertStillPrivate($path, $handle);
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /** @return list<array{restore_uuid: string, workspace_id: string, active: bool}> */
+    public function retainedRestores(): array
+    {
+        $retained = [];
+        foreach ($this->list(0) as $workspace) {
+            $marker = $this->restoreMarker($workspace->path);
+            if ($marker !== null) {
+                $retained[] = ['restore_uuid' => $marker, 'workspace_id' => $workspace->id, 'active' => $workspace->active];
+            }
+        }
+
+        return $retained;
+    }
+
+    public function cleanupRestore(string $restoreUuid, RestoreJournalStore $journals): CleanupReport
+    {
+        $restoreUuid = Identifiers::assertUuid($restoreUuid, 'The restore UUID');
+        $journal = $journals->find($restoreUuid);
+        if ($journal === null || $journal->isUnresolved()) {
+            return new CleanupReport($restoreUuid, false, false, ['The restore journal is missing or unresolved; evidence must be retained.']);
+        }
+
+        $base = $this->realBase(create: false);
+        if ($base === null) {
+            return new CleanupReport($restoreUuid, false, true, []);
+        }
+
+        $matches = array_values(array_filter($this->list(0), fn (WorkspaceInfo $workspace): bool => $this->restoreMarker($workspace->path) === $restoreUuid));
+        if (count($matches) !== 1) {
+            return new CleanupReport($restoreUuid, false, count($matches) === 0, count($matches) === 0 ? [] : ['More than one workspace claims this restore UUID.']);
+        }
+
+        return $this->deleteAbandoned($base, $matches[0]->id, $restoreUuid);
+    }
+
     public function baseDirectory(): string
     {
         return $this->paths->workspaces;
     }
 
-    private function deleteAbandoned(string $base, string $id): CleanupReport
+    private function deleteAbandoned(string $base, string $id, ?string $authorizedRestoreUuid = null): CleanupReport
     {
+        $marker = $this->restoreMarker($base.'/'.self::DIRECTORY_PREFIX.$id);
+        if ($marker !== null && $marker !== $authorizedRestoreUuid) {
+            return new CleanupReport($id, false, false, ['A restore workspace requires exact restore UUID cleanup after its journal is resolved.']);
+        }
         $lockPath = $base.'/'.self::DIRECTORY_PREFIX.$id.'.lock';
 
         if (is_link($lockPath)) {
@@ -230,6 +289,23 @@ final readonly class WorkspaceManager
         }
 
         return new CleanupReport($id, $errors === [], false, $errors);
+    }
+
+    private function restoreMarker(string $root): ?string
+    {
+        $path = $root.'/'.self::RESTORE_MARKER;
+        if (is_link($path)) {
+            return 'invalid-marker';
+        }
+        if (! is_file($path)) {
+            return file_exists($path) ? 'invalid-marker' : null;
+        }
+        $value = @file_get_contents($path, false, null, 0, 64);
+        if (! is_string($value) || ! Identifiers::isUuid(trim($value))) {
+            return 'invalid-marker';
+        }
+
+        return trim($value);
     }
 
     private function removeOrphanLockFiles(string $base): void

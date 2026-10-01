@@ -145,9 +145,20 @@ final class ArchiveTest extends TestCase
     {
         $created = $this->engine()->create($this->request());
         $bytes = (string) file_get_contents($created->path);
-        $middle = intdiv(strlen($bytes), 2);
-        $bytes[$middle] = chr(ord($bytes[$middle]) ^ 0xFF);
-        $bytes[$middle + 1] = chr(ord($bytes[$middle + 1]) ^ 0xFF);
+        $zip = new ZipArchive;
+        self::assertTrue($zip->open($created->path, ZipArchive::RDONLY));
+        $entry = $zip->statIndex(0);
+        self::assertIsArray($entry);
+        $zip->close();
+        self::assertSame(0, strpos($bytes, "PK\x03\x04"), 'The first local ZIP header must start the file.');
+        $nameLength = unpack('vlength', substr($bytes, 26, 2));
+        $extraLength = unpack('vlength', substr($bytes, 28, 2));
+        self::assertIsArray($nameLength);
+        self::assertIsArray($extraLength);
+        $dataStart = 30 + $nameLength['length'] + $extraLength['length'];
+        $payloadByte = $dataStart + intdiv((int) $entry['comp_size'], 2);
+        self::assertLessThan(strlen($bytes), $payloadByte);
+        $bytes[$payloadByte] = chr(ord($bytes[$payloadByte]) ^ 0xFF);
         file_put_contents($created->path, $bytes);
 
         $this->expectException(ArchiveVerificationFailed::class);
@@ -245,11 +256,13 @@ final class ArchiveTest extends TestCase
         $this->app->instance(SpatieConfig::class, $host);
         $engine = $this->engine();
         $threw = false;
+        $occupied = $this->workspace->path(WorkspaceArea::Archive, 'occupied');
+        file_put_contents($occupied, 'not a directory');
 
         try {
             (new \ReflectionMethod(SpatieArchiveEngine::class, 'buildZip'))->invoke(
                 $engine,
-                $this->workspace->path(WorkspaceArea::Archive, 'missing-directory/archive.zip'),
+                $occupied.'/archive.zip',
                 Sentinels::ARCHIVE_PASSWORD,
                 ['database/database.sql' => $this->workspace->path(WorkspaceArea::Database, 'absent.sql')],
             );

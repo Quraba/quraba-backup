@@ -173,6 +173,28 @@ final class BackupScheduler
             $events[] = $event;
         }
 
+        if ((bool) $this->config->get('quraba-backup.enabled', true) && (bool) $this->config->get('quraba-backup.filament.pending_enabled', false)) {
+            $event = $schedule->command('quraba:backup:pending')
+                ->everyMinute()
+                ->name('quraba-backup:pending')
+                ->description('Process a pending Filament backup request')
+                ->sendOutputTo($this->outputPath('pending'))
+                ->before(function (): void {
+                    PackagePaths::ensureDirectory(dirname($this->outputPath('pending')));
+                })
+                ->onFailure(function () use (&$event): void {
+                    $this->logger->error('A pending Quraba backup task exited unsuccessfully.', ['exit_code' => $event->exitCode]);
+                });
+
+            if ($background) {
+                $event->runInBackground();
+            }
+            if ($this->runsInMaintenanceMode()) {
+                $event->evenInMaintenanceMode();
+            }
+            $events[] = $event;
+        }
+
         return $this->registered[$schedule] = $events;
     }
 

@@ -22,6 +22,8 @@ use Quraba\Backup\Identity\IdentityResolver;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
+use Quraba\Backup\Notifications\NoticeDispatcher;
+use Quraba\Backup\Notifications\OperationalNotice;
 use Quraba\Backup\Restic\RepositoryIdentityGuard;
 use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
@@ -73,6 +75,7 @@ final readonly class RetentionExecutor
         private RetentionTombstoneStore $tombstones,
         private SecretRedactor $redactor,
         private LoggerInterface $logger,
+        private NoticeDispatcher $notices,
     ) {}
 
     /**
@@ -220,6 +223,7 @@ final readonly class RetentionExecutor
         } elseif ($uncertain) {
             $audit->markIndeterminate($failure, $expired);
             $status = MaintenanceStatus::Indeterminate;
+            $this->notices->emit(new OperationalNotice('retention.indeterminate', $audit->uuid, ['failure_code' => $failure->code]));
         } else {
             $audit->markFailed($failure, $expired);
             $status = MaintenanceStatus::Failed;

@@ -202,7 +202,7 @@ final readonly class ApplicationArchiveService
             'app_key_fingerprint' => $verification->metadata['app_key_fingerprint'] ?? null,
             'database' => array_intersect_key(
                 is_array($verification->metadata['database'] ?? null) ? $verification->metadata['database'] : [],
-                array_flip(['driver', 'flavor', 'server_version', 'migration_fingerprint', 'schema_fingerprint']),
+                array_flip(['driver', 'flavor', 'server_version', 'migration_fingerprint', 'schema_fingerprint', 'event_policy', 'event_privilege_proven', 'events_included', 'object_classes', 'exact_object_completeness']),
             ),
         ]);
 

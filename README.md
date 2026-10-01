@@ -8,8 +8,8 @@ VPS and cPanel shared hosting. Offsite storage is the customer's own **Backblaze
 > encrypted application archives, verified Restic media snapshots and coordinated Recovery Points with
 > immutable remote manifests; reports recovery health; applies exact retention; and restores one exact run —
 > as a dry run by default, live only with `--force --confirm=RESTORE_APPLICATION`, journaled, behind a
-> verified safety backup and proven quiescence — including onto a clean host. **Filament is not implemented
-> yet.**
+> verified safety backup and proven quiescence — including onto a clean host. An optional Filament 5
+> panel provides health, run history and read-only recovery tools.
 
 ## Requirements
 
@@ -43,9 +43,10 @@ All package commands use the `quraba:backup:*` namespace (bare `backup:*` belong
 | Command | Purpose |
 |---|---|
 | `quraba:backup:run [--profile=database\|media\|recovery] [--json]` | Create a verified backup (default `recovery`); exit 0 completed, 2 partial, 3 indeterminate, 1 failed |
+| `quraba:backup:pending [--json]` | Process one authorized pending panel request under the operation lock; scheduled when enabled |
 | `quraba:backup:list [--limit=] [--profile=] [--json]` | Browse the local catalog |
 | `quraba:backup:reconcile [--dry-run] [--json]` | Resolve interrupted runs from physical evidence |
-| `quraba:backup:health [--offline] [--json]` | Recovery health: healthy, degraded, failed or unknown |
+| `quraba:backup:health [--json]` | Recovery health: healthy, degraded, failed or unknown; optional transition alerts |
 | `quraba:backup:retention [--execute] [--json]` | Plan (default) or apply exact retention |
 | `quraba:backup:restic:check [--read-data] [--json]` | Audited Restic repository check |
 | `quraba:backup:restic:prune [--execute] [--json]` | Restic prune (dry run by default, never scheduled) |
@@ -62,7 +63,7 @@ All package commands use the `quraba:backup:*` namespace (bare `backup:*` belong
 | `quraba:backup:restic:init [--force]` | Explicitly initialize and bind the Restic repository |
 | `quraba:backup:restic:health [--json]` | Cheap Restic health (not `restic check`) |
 | `quraba:backup:workspace:list [--older-than=H] [--json]` | List operation workspaces |
-| `quraba:backup:workspace:cleanup [--older-than=H] [--execute] [--json]` | Plan (default) or remove abandoned workspaces |
+| `quraba:backup:workspace:cleanup [--older-than=H] [--execute] [--restore=UUID] [--json]` | Plan (default) or remove abandoned workspaces; retained restore evidence requires exact resolved restore UUID |
 
 ## Documentation
 
@@ -76,6 +77,9 @@ All package commands use the `quraba:backup:*` namespace (bare `backup:*` belong
 - [Doctor & health](docs/doctor.md)
 - [Security model](docs/security.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Optional notifications](docs/notifications.md)
+- [Optional Filament 5 panel](docs/filament.md)
+- [Upgrading](docs/upgrading.md)
 - Architecture: [specification](docs/Quraba%20Backup%20—%20Architecture%20Specification%20v1.md),
   [master plan](docs/Quraba%20Backup%20—%20Implementation%20Master%20Plan.md)
 
@@ -88,4 +92,4 @@ composer check        # composer validate, pint --test, phpstan (max), phpunit
 Opt-in integration suites: `QURABA_BACKUP_TEST_RESTIC_BINARY` (real pinned Restic, local repositories),
 `QURABA_BACKUP_TEST_MYSQL_HOST` (+ `_PORT`, `_USERNAME`, `_PASSWORD`; creates and drops its own
 `quraba_backup_it_*` databases and `quraba_it_*` accounts — including the end-to-end live restore and
-clean-host tests) and the `QURABA_BACKUP_TEST_B2_*` variables (real B2, never in normal CI).
+clean-host tests) and `QURABA_BACKUP_TEST_B2=1` plus the `QURABA_BACKUP_TEST_B2_*` variables for a disposable test bucket (real B2, never in normal CI).

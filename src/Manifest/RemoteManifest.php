@@ -48,6 +48,8 @@ final readonly class RemoteManifest
         public ?string $snapshotKind,
         public array $snapshotRoots,
         public BackupTrigger $trigger = BackupTrigger::Manual,
+        public ?bool $databaseEventsIncluded = null,
+        public ?bool $databaseExact = null,
     ) {}
 
     /**
@@ -140,6 +142,8 @@ final readonly class RemoteManifest
             throw new InvalidArgumentException('profile, status and component claims conflict');
         }
 
+        $databaseData = is_array($data['database'] ?? null) ? $data['database'] : [];
+
         return new self(
             $locator,
             ManifestBuilder::SCHEMA_VERSION,
@@ -162,6 +166,8 @@ final readonly class RemoteManifest
             $snapshotKind,
             $roots,
             BackupTrigger::tryFrom(is_string($data['trigger'] ?? null) ? $data['trigger'] : '') ?? BackupTrigger::Manual,
+            is_bool($databaseData['events_included'] ?? null) ? $databaseData['events_included'] : null,
+            is_bool($databaseData['exact_object_completeness'] ?? null) ? $databaseData['exact_object_completeness'] : null,
         );
     }
 
@@ -188,6 +194,8 @@ final readonly class RemoteManifest
             'status' => $this->status->value,
             'consistency' => $this->consistency->value,
             'recovery_point' => $this->recoveryPoint,
+            'database_events_included' => $this->databaseEventsIncluded,
+            'database_exact' => $this->databaseExact,
             'created_at' => $this->createdAt->toIso8601ZuluString(),
             'package_version' => $this->packageVersion,
             'components' => ['application_archive' => $this->archiveState, 'media_snapshot' => $this->snapshotState],

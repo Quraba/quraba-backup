@@ -174,5 +174,8 @@ fallback to copying. Links that point outside a root are refused unless the root
   AES-256 password) and on the privileges of the production account; a dump containing `USE`, `CREATE
   DATABASE`, `DROP DATABASE` or account statements is refused.
 - Verification proves structure (tables, schema fingerprint, migration history), not every row.
-- After an indeterminate restore the private workspace is kept as evidence; it contains the plaintext SQL
-  dump. Remove it with `quraba:backup:workspace:cleanup --execute` once you no longer need it.
+- After an indeterminate restore the private workspace is kept as evidence; it can contain the plaintext
+  SQL dump. Age-based workspace cleanup refuses it. First reconcile the exact restore UUID, proving a
+  terminal outcome or explicitly abandoning it. Then use
+  `php artisan quraba:backup:workspace:cleanup --restore=UUID --execute` to remove that one workspace.
+  The journal remains available for audit.

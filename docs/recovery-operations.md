@@ -101,7 +101,8 @@ attempted automatically.
 
 ## Catalog rebuild
 
-`php artisan quraba:backup:catalog:rebuild` is a plan; `--apply` adopts. It rebuilds the local catalog from
+`php artisan quraba:backup:catalog:rebuild` is a plan; `--apply` adopts. It streams each physical archive
+and requires the exact manifest size and SHA-256 before marking a catalog artifact verified. It rebuilds the local catalog from
 valid remote manifests, retention expiry records, the physical existence of every archive (present with
 its exact size), the application-scoped Restic snapshot listing and the repository identity. A component
 becomes a verified artifact only when it was just observed physically; one recorded as expired is adopted

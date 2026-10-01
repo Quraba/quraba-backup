@@ -71,6 +71,7 @@ final class ManifestBuilder
         }
 
         $metadata = $run->metadata ?? [];
+        $archiveDatabase = $archive !== null && is_array($archive->metadata['database'] ?? null) ? $archive->metadata['database'] : [];
 
         $manifest = [
             'schema_version' => self::SCHEMA_VERSION,
@@ -84,6 +85,10 @@ final class ManifestBuilder
             'recovery_point' => $run->profile === BackupProfile::Recovery && $archiveVerified && $snapshotVerified && $outcome === BackupStatus::Completed,
             'created_at' => $run->requested_at?->toIso8601ZuluString(),
             'package_version' => is_string($metadata['package_version'] ?? null) ? $metadata['package_version'] : 'unknown',
+            'database' => $archiveVerified ? [
+                'events_included' => $archiveDatabase['events_included'] ?? null,
+                'exact_object_completeness' => $archiveDatabase['exact_object_completeness'] ?? null,
+            ] : null,
             'components' => [
                 'application_archive' => self::componentState($run, BackupProfile::Database, $archive),
                 'media_snapshot' => self::componentState($run, BackupProfile::Media, $snapshot),

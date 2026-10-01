@@ -142,7 +142,7 @@ php artisan quraba:backup:catalog:rebuild --apply    # adopt
 ```
 
 The restored catalog is the one inside the backup. The rebuild adopts every backup that exists remotely
-and is missing locally — only from physical evidence (archive present with its exact size, snapshot listed
+and is missing locally — only from physical evidence (archive present with its exact size and streamed SHA-256, snapshot listed
 with this run's identity), honouring retention expiry records.
 
 ### 13. Bring the application online

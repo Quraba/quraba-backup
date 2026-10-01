@@ -52,15 +52,16 @@ final readonly class RestoreJournalStore
     {
         $path = $this->pathFor($journal->restoreUuid());
 
-        if (file_exists($path) || is_link($path)) {
-            throw RestoreFailed::journalFailed('a journal already exists for this restore UUID');
-        }
+        return $this->locked($path, function () use ($path, $journal): RestoreJournal {
+            if (file_exists($path) || is_link($path)) {
+                throw RestoreFailed::journalFailed('a journal already exists for this restore UUID');
+            }
+            if ($journal->sequence() !== 1) {
+                throw RestoreFailed::journalFailed('a new journal must start at sequence 1');
+            }
 
-        if ($journal->sequence() !== 1) {
-            throw RestoreFailed::journalFailed('a new journal must start at sequence 1');
-        }
-
-        return $this->write($path, $journal);
+            return $this->write($path, $journal);
+        });
     }
 
     /**
@@ -69,15 +70,18 @@ final readonly class RestoreJournalStore
     public function save(RestoreJournal $journal): RestoreJournal
     {
         $path = $this->pathFor($journal->restoreUuid());
-        $current = $this->read($path) ?? throw RestoreFailed::journalFailed('the journal to update does not exist');
 
-        try {
-            $journal->assertSuccessorOf($current);
-        } catch (InvalidArgumentException $exception) {
-            throw RestoreFailed::journalFailed('refusing a journal update that is not a forward step: '.$exception->getMessage());
-        }
+        return $this->locked($path, function () use ($path, $journal): RestoreJournal {
+            $current = $this->read($path) ?? throw RestoreFailed::journalFailed('the journal to update does not exist');
 
-        return $this->write($path, $journal);
+            try {
+                $journal->assertSuccessorOf($current);
+            } catch (InvalidArgumentException $exception) {
+                throw RestoreFailed::journalFailed('refusing a journal update that is not a forward step: '.$exception->getMessage());
+            }
+
+            return $this->write($path, $journal);
+        });
     }
 
     public function find(string $restoreUuid): ?RestoreJournal
@@ -105,6 +109,7 @@ final readonly class RestoreJournalStore
         if (! is_dir($directory)) {
             return ['journals' => [], 'unreadable' => []];
         }
+        $this->assertPrivateDirectory($directory);
 
         $entries = @scandir($directory);
 
@@ -166,8 +171,11 @@ final readonly class RestoreJournalStore
                 PackagePaths::ensureDirectory($directory);
                 // The directory must really live inside the private root.
                 PathGuard::assertRealWithin($directory, PackagePaths::ensureDirectory($this->paths->root));
+                $this->assertPrivateDirectory($directory);
             } elseif (is_link($directory)) {
                 throw new InvalidArgumentException('the journal directory is a symbolic link');
+            } elseif (is_dir($directory)) {
+                $this->assertPrivateDirectory($directory);
             }
         } catch (RestoreFailed $exception) {
             throw $exception;
@@ -176,6 +184,23 @@ final readonly class RestoreJournalStore
         }
 
         return $directory.'/'.$restoreUuid.'.json';
+    }
+
+    private function assertPrivateDirectory(string $directory): void
+    {
+        if (is_link($directory) || ! is_dir($directory)) {
+            throw RestoreFailed::journalFailed('the journal directory is not a real directory');
+        }
+        if (PathGuard::isWindows()) {
+            return;
+        }
+        clearstatcache(true, $directory);
+        $mode = @fileperms($directory);
+        $owner = @fileowner($directory);
+        $ownerMismatch = function_exists('posix_geteuid') && ($owner === false || $owner !== posix_geteuid());
+        if ($mode === false || ($mode & 0777) !== 0700 || $ownerMismatch) {
+            throw RestoreFailed::journalFailed('the journal directory must be owned by this user with mode 0700');
+        }
     }
 
     private function read(string $path): ?RestoreJournal
@@ -232,6 +257,41 @@ final readonly class RestoreJournalStore
     }
 
     /**
+     * @template T
+     *
+     * @param  Closure(): T  $operation
+     * @return T
+     */
+    private function locked(string $path, Closure $operation): mixed
+    {
+        $lockPath = $path.'.lock';
+        if (is_link($lockPath)) {
+            throw RestoreFailed::journalFailed('the journal lock is a symbolic link');
+        }
+        try {
+            $handle = is_file($lockPath) ? @fopen($lockPath, 'c+b') : PrivateFile::create($lockPath);
+            if ($handle === false) {
+                throw new InvalidArgumentException('the journal lock cannot be opened');
+            }
+            try {
+                PrivateFile::assertStillPrivate($lockPath, $handle);
+                if (! flock($handle, LOCK_EX)) {
+                    throw new InvalidArgumentException('the journal lock cannot be acquired');
+                }
+
+                return $operation();
+            } finally {
+                @flock($handle, LOCK_UN);
+                fclose($handle);
+            }
+        } catch (RestoreFailed $exception) {
+            throw $exception;
+        } catch (Throwable $exception) {
+            throw RestoreFailed::journalFailed('the journal lock could not protect a write', $exception);
+        }
+    }
+
+    /**
      * The default writer: temporary private file → flush → fsync → rename →
      * fsync directory.
      */
@@ -269,8 +329,14 @@ final readonly class RestoreJournalStore
         if (! PathGuard::isWindows()) {
             $directory = @fopen(dirname($path), 'r');
 
-            if ($directory !== false) {
-                @fsync($directory);
+            if ($directory === false) {
+                throw new InvalidArgumentException('the journal directory could not be opened for syncing');
+            }
+            try {
+                if (! @fsync($directory)) {
+                    throw new InvalidArgumentException('the journal directory fsync failed');
+                }
+            } finally {
                 fclose($directory);
             }
         }

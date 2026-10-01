@@ -31,6 +31,7 @@ use Quraba\Backup\Console\HealthCommand;
 use Quraba\Backup\Console\IdentityCommand;
 use Quraba\Backup\Console\InstallResticCommand;
 use Quraba\Backup\Console\ListCommand;
+use Quraba\Backup\Console\PendingCommand;
 use Quraba\Backup\Console\ReconcileCommand;
 use Quraba\Backup\Console\RecoveryChecklistCommand;
 use Quraba\Backup\Console\ResticCheckCommand;
@@ -174,6 +175,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadViewsFrom(__DIR__.'/../resources/views', 'quraba-backup');
         // Registered whenever the scheduler is resolved (schedule:run,
         // schedule:list); BackupScheduler guards against duplicates.
         // A misconfigured package schedule is logged (and reported by the
@@ -220,6 +222,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             CatalogRebuildCommand::class,
             RecoveryChecklistCommand::class,
             RunCommand::class,
+            PendingCommand::class,
             ListCommand::class,
             ReconcileCommand::class,
         ]);

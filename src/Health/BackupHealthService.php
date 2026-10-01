@@ -90,6 +90,7 @@ final readonly class BackupHealthService
 
         $checks = [
             $this->ageCheck('health.database_backup', 'Newest database backup', 'database', $archive?->run, $now),
+            $this->databaseObjectCheck($archive),
             $this->ageCheck('health.media_snapshot', 'Newest media snapshot', 'media', $snapshot?->run, $now),
             $this->ageCheck('health.recovery_point', 'Newest complete Recovery Point', 'recovery', $recoveryPoint, $now),
             $this->quiescedCheck($quiesced, $now),
@@ -109,6 +110,7 @@ final readonly class BackupHealthService
             ...$checks,
             $this->maintenanceCheck(),
             $this->workspaceCheck(),
+            $this->retainedRestoreWorkspaceCheck(),
             $this->retentionCheck($now),
             $this->resticCheckFreshness($now, $snapshot !== null),
             $this->restoreCheck($now),
@@ -126,6 +128,21 @@ final readonly class BackupHealthService
             ->orderByDesc('verified_at')
             ->orderByDesc('id')
             ->first();
+    }
+
+    private function databaseObjectCheck(?BackupArtifact $archive): CheckResult
+    {
+        if ($archive === null) {
+            return CheckResult::warn('health.database_objects', 'Database object completeness', 'No verified database archive can prove complete database object protection.');
+        }
+
+        $database = $archive->metadata['database'] ?? null;
+        $exact = is_array($database) ? ($database['exact_object_completeness'] ?? null) : null;
+        if ($exact === true) {
+            return CheckResult::pass('health.database_objects', 'Database object completeness', 'The newest database archive records complete object protection.');
+        }
+
+        return CheckResult::warn('health.database_objects', 'Database object completeness', 'The newest database archive does not prove complete object protection. Review database.event_policy, database.dump_routines and the doctor privilege checks.', ['run_uuid' => $archive->run->uuid, 'database' => $database]);
     }
 
     private function newestRecoveryPoint(bool $quiescedOnly): ?BackupRun
@@ -402,7 +419,21 @@ final readonly class BackupHealthService
 
         return $abandoned === []
             ? CheckResult::pass('health.workspaces', 'Workspaces', 'No abandoned workspaces.')
-            : CheckResult::warn('health.workspaces', 'Workspaces', sprintf('%d abandoned workspace(s) hold disk space; run "php artisan quraba:backup:workspace:cleanup".', count($abandoned)), ['count' => count($abandoned)]);
+            : CheckResult::warn('health.workspaces', 'Workspaces', sprintf('%d abandoned workspace(s) hold disk space; inspect "php artisan quraba:backup:workspace:list" before cleanup.', count($abandoned)), ['count' => count($abandoned)]);
+    }
+
+    private function retainedRestoreWorkspaceCheck(): CheckResult
+    {
+        try {
+            $retained = $this->workspaces->retainedRestores();
+            $unresolvedRetained = array_values(array_filter($retained, fn (array $row): bool => $row['restore_uuid'] === 'invalid-marker' || ($this->journals->find($row['restore_uuid'])?->isUnresolved() ?? true)));
+        } catch (Throwable $exception) {
+            return CheckResult::warn('health.restore_workspaces', 'Retained restore workspaces', 'Retained restore workspaces could not be assessed: '.$this->redactor->redact($exception->getMessage()));
+        }
+
+        return $unresolvedRetained === []
+            ? CheckResult::pass('health.restore_workspaces', 'Retained restore workspaces', 'No unresolved restore workspace is retained.')
+            : CheckResult::warn('health.restore_workspaces', 'Retained restore workspaces', sprintf('%d unresolved restore workspace(s) retain private evidence, potentially including plaintext SQL. Reconcile the exact restore UUID before explicit cleanup.', count($unresolvedRetained)), ['restores' => $unresolvedRetained]);
     }
 
     private function retentionCheck(CarbonImmutable $now): CheckResult

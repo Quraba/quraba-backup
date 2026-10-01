@@ -14,6 +14,7 @@ php artisan migrate
 
 The service provider is auto-discovered. Migrations are loaded automatically; to copy them into the
 application instead, run `php artisan vendor:publish --tag=quraba-backup-migrations`.
+Filament is optional; install it separately and register the plugin only if you want the admin panel.
 
 Optionally publish the configuration:
 

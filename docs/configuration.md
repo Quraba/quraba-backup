@@ -3,6 +3,15 @@
 All settings use the `QURABA_BACKUP_*` namespace. Secrets are read only from the environment and are never
 stored in the database.
 
+The optional Filament 5 panel is configured in the published `filament` section. Set
+`pending_enabled=true` to schedule panel backup requests, then define the named Gates or callbacks in
+[the Filament guide](filament.md). Panel authorizations default to denied. No secret is editable there.
+
+Database metadata claims exact object completeness only when direct grants prove table reads, view
+visibility, trigger visibility, routine visibility and EVENT capability, with the matching dump tool for
+MariaDB sequences. The doctor warns about missing proof; an otherwise usable backup remains explicitly
+marked incomplete.
+
 ## Identity
 
 | Variable | Meaning |
@@ -37,6 +46,8 @@ The application key needs read, write, list and exact delete access to the bucke
 retention tombstones and the Restic repository). Do **not** add B2 lifecycle rules that delete objects under
 these prefixes; explicit package retention and Restic maintain them. Credentials stay in the environment; the package never stores
 them in the database and never registers them as a named Laravel disk.
+For bucket-restricted keys, Backblaze also documents `listAllBucketNames` as necessary for compatibility
+with S3 SDK integrations; grant it if the SDK cannot authenticate a bucket-scoped key.
 
 Restic may use separate credentials via `QURABA_BACKUP_RESTIC_B2_KEY_ID` /
 `QURABA_BACKUP_RESTIC_B2_APPLICATION_KEY`; otherwise the shared B2 key is used. Credentials reach Restic only
@@ -84,8 +95,13 @@ The application connection (`QURABA_BACKUP_DB_CONNECTION`, default: the default 
 (`mariadb-dump`, then `mysqldump`, preferring `mysqldump` for Oracle MySQL servers) or set with
 `QURABA_BACKUP_DB_DUMP_BINARY`. `QURABA_BACKUP_DB_DUMP_TIMEOUT` (seconds, default 3600) bounds the dump;
 `QURABA_BACKUP_DB_DUMP_ROUTINES=false` skips stored routines if the database user lacks the privilege.
-`QURABA_BACKUP_DB_DUMP_EVENTS=true` also dumps scheduled events (the account needs the `EVENT` privilege);
-without it a live restore, which replaces the database exactly, removes events without bringing them back.
+`QURABA_BACKUP_DB_EVENT_POLICY=auto` (default) includes scheduled events only when `SHOW GRANTS` proves
+`EVENT` or `ALL` on the application database. A backup without that proof is marked incomplete in archive
+metadata, the remote manifest, health and restore reports. `required` refuses the backup unless the privilege
+is proven; `assume_none` is an explicit shared-hosting opt-out and remains marked incomplete. Legacy
+`QURABA_BACKUP_DB_DUMP_EVENTS=true` acts as `required`. Routines remain enabled by default; disabling them
+also marks database object protection incomplete. The dump includes tables, views and triggers; MariaDB
+sequences are reported as protected only with `mariadb-dump`.
 
 For restore preparation, `QURABA_BACKUP_RESTORE_DB_VALIDATION` selects `artifact` (default), `schema`, or
 `scratch_import`. The last level needs `QURABA_BACKUP_SCRATCH_CONNECTION`, a dedicated, empty database
@@ -103,6 +119,7 @@ underscore as `\_` in the database-level `GRANT` scope; otherwise the grant can 
 | `restore.confirmation_phrase` | `RESTORE_APPLICATION` | The exact phrase `--confirm=` must carry (at least 8 characters). |
 | `QURABA_BACKUP_RESTORE_AUTO_UP` | `false` | Leave maintenance mode after a completed restore. Keep it off: verify first. |
 | `QURABA_BACKUP_RESTORE_REWRITE_DEFINERS` | `false` | Create views, triggers and routines as the restoring account when the dump names another one. |
+| `QURABA_BACKUP_RESTORE_REQUIRE_COMPLETE_DATABASE` | `false` | Block dry and live restore when the source does not prove event and routine coverage. |
 | `QURABA_BACKUP_DB_IMPORT_TIMEOUT` | `7200` | Seconds the database client may take to import the dump. |
 | `retention.safety_days` | `30` | How long the safety backup of a settled restore is kept. |
 | `restic.media.roots.{name}.staging` | none | A private directory on the root's filesystem, used when the package workspace is on another one. |

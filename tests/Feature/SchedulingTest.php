@@ -76,6 +76,21 @@ final class SchedulingTest extends TestCase
         self::assertSame(3, $count);
     }
 
+    public function test_opt_in_pending_processor_is_registered_once_without_queue_worker(): void
+    {
+        $this->config()->set('quraba-backup.filament.pending_enabled', true);
+        $this->app->forgetInstance(Schedule::class);
+        $this->app->forgetInstance(BackupScheduler::class);
+        $schedule = $this->app->make(Schedule::class);
+        $scheduler = $this->app->make(BackupScheduler::class);
+        $scheduler->register($schedule);
+
+        $pending = array_values(array_filter($schedule->events(), static fn (Event $event): bool => str_contains((string) $event->command, 'quraba:backup:pending')));
+        self::assertCount(1, $pending);
+        self::assertSame('* * * * *', $pending[0]->expression);
+        self::assertSame(BackupScheduler::platformSupportsBackground(), $pending[0]->runInBackground);
+    }
+
     public function test_invalid_schedule_configuration_is_refused(): void
     {
         $this->config()->set('quraba-backup.schedule.database.time', '02:07');

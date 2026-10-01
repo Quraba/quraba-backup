@@ -26,6 +26,8 @@ use Quraba\Backup\Media\MediaDestination;
 use Quraba\Backup\Media\MediaRootResolver;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\RestoreRun;
+use Quraba\Backup\Notifications\NoticeDispatcher;
+use Quraba\Backup\Notifications\OperationalNotice;
 use Quraba\Backup\Restore\Journal\JournalPhase;
 use Quraba\Backup\Restore\Journal\RestoreJournal;
 use Quraba\Backup\Restore\Journal\RestoreJournalStore;
@@ -97,6 +99,7 @@ final readonly class LiveRestoreService
         private RestoreStepObserver $steps,
         private SecretRedactor $redactor,
         private LoggerInterface $logger,
+        private NoticeDispatcher $notices,
     ) {}
 
     /**
@@ -200,6 +203,7 @@ final readonly class LiveRestoreService
         $c->restoreUuid = $restoreUuid;
         $c->report['restore_uuid'] = $restoreUuid;
         $workspace = $c->workspace = $this->workspaces->create();
+        $this->workspaces->markRestore($workspace, $restoreUuid);
 
         // The whole non-destructive preparation, fresh.
         $prepared = $this->preparation->prepare(
@@ -776,6 +780,7 @@ final readonly class LiveRestoreService
         }
 
         $this->mirror($c);
+        $this->notices->emit(new OperationalNotice('restore.indeterminate', $journal->restoreUuid(), ['failure_code' => $failure->code]));
         $c->report['notice'] = 'The restore stopped AFTER its destructive boundary. The application state is INDETERMINATE and it remains in maintenance mode. Nothing was rolled back: the safety backup, the parked media and the journal are preserved.';
         $c->report['safety_backup'] = $journal->safetyBackup();
         $c->report['parked_media'] = array_values(array_filter(array_map(static fn (array $root): mixed => $root['parked'] ?? null, $journal->media()), is_string(...)));

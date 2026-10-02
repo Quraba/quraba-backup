@@ -7,3 +7,5 @@
 /phpunit.xml        export-ignore
 /phpstan.neon.dist  export-ignore
 /pint.json          export-ignore
+/composer.lock      export-ignore
+/testbench.yaml     export-ignore

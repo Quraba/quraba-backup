@@ -92,4 +92,6 @@ composer check        # composer validate, pint --test, phpstan (max), phpunit
 Opt-in integration suites: `QURABA_BACKUP_TEST_RESTIC_BINARY` (real pinned Restic, local repositories),
 `QURABA_BACKUP_TEST_MYSQL_HOST` (+ `_PORT`, `_USERNAME`, `_PASSWORD`; creates and drops its own
 `quraba_backup_it_*` databases and `quraba_it_*` accounts — including the end-to-end live restore and
-clean-host tests) and `QURABA_BACKUP_TEST_B2=1` plus the `QURABA_BACKUP_TEST_B2_*` variables for a disposable test bucket (real B2, never in normal CI).
+clean-host tests) and `QURABA_BACKUP_TEST_B2=1` plus the `QURABA_BACKUP_TEST_B2_*` variables for a
+disposable test bucket. In CI, real B2 runs only through the manual `run_b2` input, never on normal push
+or pull-request runs.

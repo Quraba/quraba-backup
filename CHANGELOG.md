@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased — v1 hardening (not tagged)
+## v1.0.0 — 2026-10-02
+
+### Validated release gates
+
+- Ubuntu 24.04 with PHP 8.5, MySQL 8.4 and MariaDB 11.4: full PHPUnit suite, Pint,
+  PHPStan max, Composer validation, real Restic 0.19.1 integration, live restore end to end
+  and clean-host disaster recovery.
+- The manually triggered real Backblaze B2 S3 integration passed against a generated
+  disposable prefix: authentication, object upload/existence/size/streamed hash, immutable
+  manifest adoption and retention tombstone, Restic init/backup/snapshot listing/restore/
+  forget/prune, wrong-credential distinction and exact object/version/delete-marker cleanup.
+- These gates validate the stated Linux, database, Restic and B2 combinations. They do not
+  claim a live restore on every supported hosting provider or architecture.
+
+### Release hardening
 
 - Catalog rebuild now streams each remote archive and requires its physical SHA-256 and exact byte count
   to match the immutable manifest, including a second check immediately before adoption.
@@ -17,16 +31,16 @@
   deduplication were added. Delivery failures do not change operation outcomes.
 - Optional Filament 5 plugin adds a health dashboard, paginated run history, safe details, explicit
   authorization, scheduler-backed backup requests, restore dry runs and read-only retention planning.
-- Added an explicitly opt-in real B2 disposable-prefix lifecycle test. It has not been run without test
-  credentials; v1 release readiness still requires that result and green Linux CI.
+- Added an explicitly opt-in real B2 disposable-prefix lifecycle test and a manual CI release gate;
+  normal push and pull-request CI does not receive B2 credentials.
 
 Supported target: PHP 8.5, Laravel 13, Linux, MySQL 8.4 or MariaDB 11.4, Restic 0.19.1 and Backblaze B2
 S3 API. Live restore remains CLI-only and requires exact run UUID, quiescence, a verified safety backup
 unless the target is proven empty, a durable journal and explicit confirmation.
 
-## Unreleased — Live restore and disaster recovery
+### Live restore and disaster recovery
 
-### Changed
+#### Changed
 - **Retention records remote truth per component.** An immutable expiry record
   (`retention/{run}/{component}.json`) is written as soon as ONE component's absence is proven, so a deleted
   archive is never still advertised because forgetting the snapshot failed. Combined tombstones of the
@@ -47,7 +61,7 @@ unless the target is proven empty, a durable journal and explicit confirmation.
   evidence and expire `retention.safety_days` after their restore was settled.
 - Health reports unresolved live restores from the restore journals, also when the catalog is gone.
 
-### Added
+#### Added
 - **Live restore** (`LiveRestoreService`): fresh non-destructive preparation, proven quiescence, verified
   pre-change safety backup (`pre_restore`, pinned), re-verification, then exact database replacement followed
   by exact media replacement, final verification; the application stays in maintenance mode.
@@ -64,16 +78,16 @@ unless the target is proven empty, a durable journal and explicit confirmation.
   `restic.media.roots.{name}.staging`.
 - Documentation: `docs/restore.md`, `docs/disaster-recovery.md`.
 
-## Unreleased — Backups (master plan phases 3–5)
+### Backups
 
-### Changed
+#### Changed
 - **All package commands moved to the `quraba:backup:*` namespace** (bare `backup:*` belongs to
   spatie/laravel-backup). No aliases are provided.
 - CI runs on pushes and pull requests for `development` and `master`, with MySQL 8.4 and MariaDB 11.4 services.
 - Repository IDs are validated as Restic object IDs, not as snapshot IDs.
 - The doctor's archive password check is now a required FAIL; media roots are validated by the real resolver.
 
-### Added
+#### Added
 - Encrypted application archive (database dump + `.env` + `quraba-backup.json`) built by Spatie Laravel Backup's
   zip task behind the `ArchiveEngine` boundary, AES-256 enforced; `ArchiveVerifier`.
 - MySQL/MariaDB dumps through Spatie db-dumper's dumper with an argument-array executor (no shell, credentials
@@ -89,14 +103,14 @@ unless the target is proven empty, a durable journal and explicit confirmation.
 - Laravel scheduling of the three profiles (5-minute-boundary validated, overlap-safe via flock).
 - Doctor backup-readiness group; Restic health reports the expected repository identity.
 
-## Health, retention and restore dry run (master plan phases 6–7)
+### Health, retention and restore dry run
 
 - `quraba:backup:health`, `quraba:backup:retention` (plan by default, exact deletion with `--execute`),
   `quraba:backup:restic:check`, `quraba:backup:restic:prune`, `quraba:backup:discover --remote` and the
   restore dry run (`quraba:backup:restore`), with repository-identity consensus across manifests, strict
   private credential files and background scheduling.
 
-## Foundation (master plan phases 0–2)
+### Foundation
 
 - Package skeleton, configuration, domain enums/state machines, catalog, identity, workspaces, flock locks,
   exception taxonomy, secret redaction, pinned Restic runtime (installer, runner, repository init/health),

@@ -38,7 +38,7 @@ Remote layout (one bucket may hold several applications):
 ```text
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/archives/YYYY/MM/DD/{run_uuid}/application.zip
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/manifests/YYYY/MM/DD/{run_uuid}.json
-{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/retention/{run_uuid}.json
+{bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/retention/{run_uuid}/{component}.json
 {bucket}/{QURABA_BACKUP_PREFIX}/{APP_ID}/restic/…        ← managed exclusively by Restic
 ```
 

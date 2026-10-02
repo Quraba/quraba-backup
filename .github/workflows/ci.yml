@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [development, master]
   workflow_dispatch:
+    inputs:
+      run_b2:
+        description: Run the real Backblaze B2 release gate against a disposable test bucket
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -111,3 +117,51 @@ jobs:
           tests/Integration/RealLiveRestoreTest.php
           tests/Integration/RealDatabaseArchiveTest.php
           tests/Integration/RealResticMediaTest.php
+
+  b2-release-gate:
+    name: Real B2 release gate (manual only)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_b2 == true }}
+    runs-on: ubuntu-24.04
+    env:
+      RESTIC_VERSION: '0.19.1'
+      RESTIC_SHA256: 'f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c'
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          extensions: bz2, curl, json, mbstring, openssl, pdo, pdo_sqlite, posix, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Install pinned Restic (checksum verified)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/restic"
+          cd "$RUNNER_TEMP/restic"
+          curl -fsSL -o restic.bz2 "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2"
+          echo "${RESTIC_SHA256}  restic.bz2" | sha256sum -c -
+          bunzip2 -c restic.bz2 > restic
+          chmod 0700 restic
+          ./restic version
+          echo "QURABA_BACKUP_TEST_RESTIC_BINARY=$RUNNER_TEMP/restic/restic" >> "$GITHUB_ENV"
+
+      - name: Real B2 integration (skips and incomplete tests fail)
+        env:
+          QURABA_BACKUP_TEST_B2: '1'
+          QURABA_BACKUP_TEST_B2_ENDPOINT: ${{ secrets.QURABA_BACKUP_TEST_B2_ENDPOINT }}
+          QURABA_BACKUP_TEST_B2_REGION: ${{ secrets.QURABA_BACKUP_TEST_B2_REGION }}
+          QURABA_BACKUP_TEST_B2_BUCKET: ${{ secrets.QURABA_BACKUP_TEST_B2_BUCKET }}
+          QURABA_BACKUP_TEST_B2_KEY_ID: ${{ secrets.QURABA_BACKUP_TEST_B2_KEY_ID }}
+          QURABA_BACKUP_TEST_B2_APPLICATION_KEY: ${{ secrets.QURABA_BACKUP_TEST_B2_APPLICATION_KEY }}
+          QURABA_BACKUP_TEST_B2_ALLOW_INIT: '1'
+          QURABA_BACKUP_TEST_B2_PRUNE: '1'
+        run: >-
+          vendor/bin/phpunit --fail-on-skipped --fail-on-incomplete
+          tests/Integration/B2RepositoryTest.php

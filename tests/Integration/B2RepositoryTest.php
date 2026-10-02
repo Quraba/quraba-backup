@@ -18,6 +18,7 @@ use Quraba\Backup\Restic\ResticRepository;
 use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Retention\RetentionTombstone;
 use Quraba\Backup\Retention\RetentionTombstoneStore;
+use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Storage\RemoteStorage;
 use Quraba\Backup\Support\Process\ProcessFactory;
 use Quraba\Backup\Support\Process\SymfonyProcessFactory;
@@ -26,6 +27,7 @@ use Quraba\Backup\Tests\TestCase;
 use Quraba\Backup\Workspace\WorkspaceArea;
 use Quraba\Backup\Workspace\WorkspaceManager;
 use Symfony\Component\Uid\Uuid;
+use Throwable;
 
 /**
  * Optional, opt-in test against a real Backblaze B2 bucket. Never part of
@@ -92,8 +94,8 @@ final class B2RepositoryTest extends TestCase
         $this->refreshPackageServices();
         $this->app->instance(ProcessFactory::class, new SymfonyProcessFactory);
         $this->app->forgetInstance(RemoteStorage::class);
-        $this->prefixInitiallyEmpty = $this->ownedKeys() === [];
-        self::assertTrue($this->prefixInitiallyEmpty, 'The generated disposable prefix must start empty.');
+        $this->prefixInitiallyEmpty = $this->ownedKeys() === [] && $this->ownedVersions($this->s3()) === [];
+        self::assertTrue($this->prefixInitiallyEmpty, 'The generated disposable prefix must start empty, including versions and delete markers.');
     }
 
     protected function tearDown(): void
@@ -106,10 +108,18 @@ final class B2RepositoryTest extends TestCase
                 }
                 $this->cleanupVersions($client);
                 self::assertSame([], $this->ownedKeys(), 'Disposable B2 objects must be removed exactly.');
+                self::assertSame([], $this->ownedVersions($client), 'Disposable B2 versions and delete markers must be removed exactly.');
             }
+        } catch (Throwable $exception) {
+            self::fail('Real B2 cleanup failed: '.$this->redactFailure($exception->getMessage()));
         } finally {
             parent::tearDown();
         }
+    }
+
+    protected function transformException(Throwable $t): Throwable
+    {
+        return new \RuntimeException('Real B2 integration failed: '.$this->redactFailure($t->getMessage()));
     }
 
     public function test_disposable_b2_archive_manifest_expiry_and_restic_lifecycle(): void
@@ -155,7 +165,9 @@ final class B2RepositoryTest extends TestCase
         $backup = $runner->backup(ResticBackupRequest::make([$media], ['quraba-backup', 'app:'.$this->disposableAppId, 'kind:media'], 'b2-test'))->throwIfFailed();
         $id = $backup->summary()['snapshot_id'] ?? null;
         self::assertIsString($id);
-        self::assertSame($id, $repository->snapshots(['app:'.$this->disposableAppId])[0]->id);
+        $snapshots = $repository->snapshots(['app:'.$this->disposableAppId]);
+        self::assertCount(1, $snapshots);
+        self::assertSame($id, $snapshots[0]->id);
         $workspace = $this->app->make(WorkspaceManager::class)->create();
         try {
             $runner->restore($id, $workspace)->throwIfFailed();
@@ -215,6 +227,18 @@ final class B2RepositoryTest extends TestCase
 
     private function cleanupVersions(S3Client $client): void
     {
+        foreach ($this->ownedVersions($client) as $version) {
+            $client->deleteObject([
+                'Bucket' => (string) getenv('QURABA_BACKUP_TEST_B2_BUCKET'),
+                'Key' => $version['key'],
+                'VersionId' => $version['version'],
+            ]);
+        }
+    }
+
+    /** @return list<array{key: string, version: string}> */
+    private function ownedVersions(S3Client $client): array
+    {
         $prefix = $this->disposableRoot;
         if ($prefix === null || preg_match('~^quraba-disposable-test/[0-9a-f]{32}/[0-9a-f-]{36}/$~', $prefix) !== 1) {
             throw new \LogicException('Refusing B2 version cleanup outside a generated disposable application prefix.');
@@ -223,6 +247,7 @@ final class B2RepositoryTest extends TestCase
         $bucket = (string) getenv('QURABA_BACKUP_TEST_B2_BUCKET');
         $keyMarker = null;
         $versionMarker = null;
+        $versions = [];
         do {
             $options = ['Bucket' => $bucket, 'Prefix' => $prefix];
             if ($keyMarker !== null) {
@@ -237,12 +262,22 @@ final class B2RepositoryTest extends TestCase
                     if (! is_string($key) || ! str_starts_with($key, $prefix) || ! is_string($version)) {
                         throw new \LogicException('The B2 version listing escaped its disposable prefix.');
                     }
-                    $client->deleteObject(['Bucket' => $bucket, 'Key' => $key, 'VersionId' => $version]);
+                    $versions[] = ['key' => $key, 'version' => $version];
                 }
             }
             $keyMarker = $page->get('IsTruncated') === true ? $page->get('NextKeyMarker') : null;
             $versionMarker = $page->get('NextVersionIdMarker');
         } while (is_string($keyMarker) && $keyMarker !== '');
+
+        return $versions;
+    }
+
+    private function redactFailure(string $message): string
+    {
+        return SecretRedactor::fromSecrets([
+            (string) getenv('QURABA_BACKUP_TEST_B2_KEY_ID'),
+            (string) getenv('QURABA_BACKUP_TEST_B2_APPLICATION_KEY'),
+        ])->redact($message);
     }
 
     public function test_fresh_prefix_is_reported_uninitialized_not_broken(): void

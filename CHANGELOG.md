@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.0.1 — 2026-10-02
+
+- Allow Laravel applications already using Guzzle 8 to install Quraba Backup. The v1.0.0
+  `^7.9` Composer constraint blocked those consumers despite the package having no direct
+  Guzzle API usage and its AWS SDK and Laravel dependencies supporting Guzzle 8.
+
 ## v1.0.0 — 2026-10-02
 
 ### Validated release gates

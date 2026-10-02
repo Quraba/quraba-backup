@@ -181,7 +181,7 @@ final class B2RepositoryTest extends TestCase
         $runner->forget([$id])->throwIfFailed();
         self::assertSame([], $repository->snapshots());
         if (getenv('QURABA_BACKUP_TEST_B2_PRUNE') === '1') {
-            $runner->prune()->throwIfFailed();
+            $runner->prune(dryRun: false)->throwIfFailed();
         }
     }
 

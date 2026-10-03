@@ -41,7 +41,7 @@ jobs:
         run: vendor/bin/pint --test
 
       - name: Static analysis (PHPStan max)
-        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+        run: vendor/bin/phpstan analyse -c phpstan.windows.neon --memory-limit=1G --no-progress
 
       - name: Install official Windows Restic through package installer
         shell: pwsh

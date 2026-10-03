@@ -189,6 +189,7 @@ final class ResticCommandsTest extends TestCase
         }
 
         self::assertSame('pass', $statuses['locking.cross_process']);
+        self::assertSame('pass', $statuses['runtime.php']);
         self::assertSame('pass', $statuses['runtime.os']);
         self::assertSame('pass', $statuses['runtime.architecture']);
         if (PHP_OS_FAMILY === 'Windows') {

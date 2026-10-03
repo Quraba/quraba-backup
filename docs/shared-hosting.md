@@ -5,7 +5,7 @@ Redis, queue worker or daemon.
 
 ## Prerequisites
 
-- PHP 8.5 CLI with `proc_open` enabled (check with `php artisan quraba:backup:doctor`)
+- PHP 8.4+ CLI with `proc_open` enabled (check with `php artisan quraba:backup:doctor`)
 - `ext-bz2` **or** a `bzip2` binary (only for `quraba:backup:install-restic`)
 - Writable `storage/` (the package keeps everything under `storage/app/private/quraba-backup`, mode 0700)
 - A local filesystem for locks (`flock` must work; the doctor proves it across two processes)

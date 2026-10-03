@@ -7,7 +7,7 @@ when any `FAIL` is present (FAIL is reserved for required checks).
 
 | Area | Checks |
 |---|---|
-| runtime | PHP ≥ 8.5, verified Laravel major, Linux amd64/arm64 or Windows amd64, live `proc_open` probe, required extensions, zip, HTTP transport; POSIX is not applicable on Windows |
+| runtime | PHP ≥ 8.4, verified Laravel major, Linux amd64/arm64 or Windows amd64, live `proc_open` probe, required extensions, zip, HTTP transport; POSIX is not applicable on Windows |
 | identity | `QURABA_BACKUP_APP_ID`, environment identity (warns when derived from APP_ENV), enabled flag |
 | storage | package directories outside `public/`, private root writable, workspace create/cleanup probe |
 | locking | `flock` works, a **second process** is refused while the lock is held, operation lock state |

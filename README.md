@@ -13,7 +13,7 @@ Linux or Windows. Linux VPS and cPanel shared hosting are supported. Offsite sto
 
 ## Requirements
 
-- PHP 8.5+, Laravel 13
+- PHP 8.4+, Laravel 13
 - Linux amd64/arm64 or Windows amd64; the managed Restic 0.19.1 release is pinned for each
 - `proc_open` enabled for PHP CLI, writable private storage, outbound HTTPS, one cron entry
 - MySQL or MariaDB with `mariadb-dump`/`mysqldump` (and `mariadb`/`mysql`) client tools

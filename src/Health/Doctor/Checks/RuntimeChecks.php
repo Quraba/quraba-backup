@@ -47,9 +47,14 @@ final readonly class RuntimeChecks implements DoctorCheck
     private function php(): CheckResult
     {
         // Evaluated at runtime: the host may run a different PHP than Composer resolved for.
-        return version_compare(PHP_VERSION, '8.5.0', '>=')
+        return self::supportsPhpVersion(PHP_VERSION)
             ? CheckResult::pass('runtime.php', 'PHP version', PHP_VERSION)
-            : CheckResult::fail('runtime.php', 'PHP version', sprintf('PHP %s is too old; PHP 8.5+ is required.', PHP_VERSION));
+            : CheckResult::fail('runtime.php', 'PHP version', sprintf('PHP %s is too old; PHP 8.4+ is required.', PHP_VERSION));
+    }
+
+    public static function supportsPhpVersion(string $version): bool
+    {
+        return version_compare($version, '8.4.0', '>=');
     }
 
     private function laravel(): CheckResult

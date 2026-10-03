@@ -1,5 +1,7 @@
 # Installation
 
+Requires PHP 8.4+ and Laravel 13 on Linux amd64/arm64 or Windows amd64.
+
 > This release creates and schedules verified backups (application archives, media snapshots, Recovery
 > Points), reports recovery health, applies exact retention and restores one exact run — see
 > [restore](restore.md) and [disaster recovery](disaster-recovery.md). Once backups work, run

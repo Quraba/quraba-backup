@@ -1,8 +1,8 @@
 
 # Quraba Backup — Implementation Master Plan
 
-> Historical v1 implementation plan. The current platform contract, including upcoming Windows amd64
-> support in v1.1.0, is documented in the README and operational guides.
+> Historical v1 implementation plan. Current PHP 8.4+/Laravel 13 and Linux/Windows requirements
+> for the upcoming v1.1.0 are documented in the README and operational guides.
 
 **Package:** `quraba/quraba-backup`  
 **Namespace:** `Quraba\Backup`  
@@ -11,7 +11,7 @@
 **Archive engine:** Spatie Laravel Backup  
 **Media engine:** Restic  
 **Database:** MySQL / MariaDB  
-**PHP:** 8.5+  
+**PHP:** 8.4+
 **Shared Hosting:** First-class supported environment  
 **Multi-tenancy:** Out of scope  
 **Vault:** Out of scope
@@ -186,7 +186,7 @@ Filament remains optional.
 CI should start with:
 
 ```text
-PHP 8.5
+PHP 8.4 and 8.5
 current supported Laravel
 MySQL
 MariaDB where practical

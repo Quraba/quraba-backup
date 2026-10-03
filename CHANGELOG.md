@@ -2,12 +2,15 @@
 
 ## Unreleased — v1.1.0
 
+- Support PHP 8.4 alongside PHP 8.5 on the established Linux and Windows platforms. The doctor now
+  accepts PHP 8.4+, and CI covers both runtimes with the real package suite; the manual B2 gate runs on
+  the lowest supported PHP version.
 - Add Windows amd64 support alongside Linux amd64/arm64. The managed installer verifies the official
   Restic 0.19.1 Windows ZIP against the package-pinned SHA-256 and official checksum manifest, extracts
   only its expected executable, verifies version and GOOS/GOARCH, and installs `restic.exe` safely.
 - Make doctor, paths, executable verification and password-file diagnostics platform aware. Preserve the
   portable Laravel default `storage/app/private/quraba-secrets/restic-password`.
-- Add a real Windows PHP 8.5 CI job for the installer, full suite, repository operations, media backup
+- Add real Windows PHP 8.4/8.5 CI jobs for the installer, full suite, repository operations, media backup
   and exact restore; retain the existing Linux and B2 gates. Windows ACL privacy and journal-directory
   syncing are documented as platform limitations.
 

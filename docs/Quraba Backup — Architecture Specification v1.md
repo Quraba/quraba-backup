@@ -1,6 +1,10 @@
 
 # Quraba Backup — Architecture Specification v1
 
+> Historical v1 design record. For the current platform contract, including the upcoming Windows amd64
+> support in v1.1.0, use the README and operational documentation; this proposal's Linux-only statements
+> describe the original v1 scope.
+
 **Package:** `quraba/quraba-backup`  
 **Namespace:** `Quraba\Backup`  
 **Architecture status:** Proposed / ready for implementation planning  

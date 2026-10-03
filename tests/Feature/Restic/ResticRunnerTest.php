@@ -46,6 +46,14 @@ final class ResticRunnerTest extends TestCase
         $this->runner()->binary();
     }
 
+    public function test_binary_for_another_operating_system_is_refused(): void
+    {
+        $this->useFakeRestic(['go_os' => PHP_OS_FAMILY === 'Windows' ? 'linux' : 'windows']);
+
+        $this->expectException(ResticUnavailable::class);
+        $this->runner()->binary();
+    }
+
     public function test_a_binary_replaced_on_disk_is_verified_again(): void
     {
         $path = $this->useFakeRestic();

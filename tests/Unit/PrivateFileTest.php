@@ -11,6 +11,24 @@ use Quraba\Backup\Support\PrivateFile;
 
 final class PrivateFileTest extends TestCase
 {
+    public function test_windows_private_file_proves_regular_opened_identity(): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            self::markTestSkipped('Windows file identity is exercised on the Windows CI runner.');
+        }
+
+        $path = sys_get_temp_dir().'/quraba-private-'.bin2hex(random_bytes(8));
+        $handle = PrivateFile::create($path);
+        try {
+            self::assertSame(6, fwrite($handle, 'secret'));
+            PrivateFile::assertStillPrivate($path, $handle);
+            self::assertTrue(is_file($path));
+        } finally {
+            fclose($handle);
+            self::assertTrue(PrivateFile::destroy($path));
+        }
+    }
+
     public function test_linux_option_file_is_exclusive_owned_0600_and_umask_is_restored(): void
     {
         if (PHP_OS_FAMILY === 'Windows') {

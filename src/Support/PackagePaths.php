@@ -11,8 +11,8 @@ use Quraba\Backup\Exceptions\WorkspaceViolation;
 /**
  * Validated package-private filesystem locations.
  *
- * Directories are created lazily with owner-only permissions (0700) by the
- * components that need them; resolving this object never touches the disk.
+ * Directories are created lazily (0700 on POSIX; inherited ACLs on Windows)
+ * by the components that need them; resolving this object never touches disk.
  */
 final readonly class PackagePaths
 {
@@ -44,7 +44,7 @@ final readonly class PackagePaths
     }
 
     /**
-     * Creates a package-private directory (0700) if needed and returns it.
+     * Creates a package-private directory (0700 on POSIX) if needed.
      */
     public static function ensureDirectory(string $directory): string
     {

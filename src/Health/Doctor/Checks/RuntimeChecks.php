@@ -66,9 +66,9 @@ final readonly class RuntimeChecks implements DoctorCheck
     {
         $family = $this->platforms->osFamily();
 
-        return $family === 'Linux'
-            ? CheckResult::pass('runtime.os', 'Operating system', 'Linux')
-            : CheckResult::fail('runtime.os', 'Operating system', sprintf('%s is not a supported production host; Quraba Backup targets Linux (VPS or shared hosting).', $family));
+        return in_array($family, ['Linux', 'Windows'], true)
+            ? CheckResult::pass('runtime.os', 'Operating system', $family)
+            : CheckResult::fail('runtime.os', 'Operating system', sprintf('%s is not a supported host; supported: Linux and Windows.', $family));
     }
 
     private function architecture(): CheckResult
@@ -125,9 +125,11 @@ final readonly class RuntimeChecks implements DoctorCheck
             ? CheckResult::pass('runtime.ext_zip', 'zip extension', 'Available for encrypted application archives.')
             : CheckResult::warn('runtime.ext_zip', 'zip extension', 'Missing. It will be required once application archive backups are enabled.');
 
-        $results[] = extension_loaded('posix')
+        $results[] = $this->platforms->osFamily() === 'Windows'
+            ? CheckResult::skip('runtime.ext_posix', 'posix extension', 'Not applicable on Windows; NTFS permissions use ACLs.')
+            : (extension_loaded('posix')
             ? CheckResult::pass('runtime.ext_posix', 'posix extension', 'Available.')
-            : CheckResult::warn('runtime.ext_posix', 'posix extension', 'Missing; permission diagnostics are less precise.');
+            : CheckResult::warn('runtime.ext_posix', 'posix extension', 'Missing; permission diagnostics are less precise.'));
 
         return $results;
     }

@@ -116,7 +116,7 @@ final readonly class MediaStaging
         $a = ($this->deviceOf)($from);
         $b = ($this->deviceOf)($to);
 
-        if ($a === null || $b === null || $a !== $b) {
+        if ($a === null || $b === null || $a === 0 || $b === 0 || $a !== $b) {
             return false;
         }
 

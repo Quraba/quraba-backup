@@ -86,8 +86,11 @@ component is journaled on its own, and all parked old trees are kept until the w
 ## The restore journal
 
 Every live restore writes a journal at `<private root>/journal/<restore uuid>.json` — outside the
-application database, which the restore replaces. It is private (0600 in a 0700 directory), written
-atomically (temporary file, fsync, rename, directory fsync, read-back), contains no secret and only moves
+application database, which the restore replaces. On Linux it is private (0600 in a 0700 directory) and
+written atomically (temporary file, fsync, rename, directory fsync, read-back). On Windows it uses an
+exclusive file, file flush/fsync, same-directory replacement and read-back; PHP cannot prove NTFS ACL
+privacy or sync the containing directory. Restrict the private storage ACL to the application account
+and use a local durable filesystem. The journal contains no secret and only moves
 forward. It records the frozen source identities, the safety backup run, the quiescence, the database
 target and inventory, every media root's live, staged and parked path, and each step.
 

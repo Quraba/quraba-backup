@@ -39,6 +39,7 @@ use Quraba\Backup\Restore\RestoreSource;
 use Quraba\Backup\Restore\RestoreSourceResolver;
 use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Support\LocalCatalog;
+use Quraba\Backup\Support\PathGuard;
 use Quraba\Backup\Workspace\OperationWorkspace;
 use Quraba\Backup\Workspace\WorkspaceManager;
 use Throwable;
@@ -380,6 +381,12 @@ final readonly class LiveRestoreService
     private function planRoot(LiveRestoreContext $c, MediaRootMapping $mapping, string $restoreUuid): void
     {
         $live = $this->directories->identity($mapping->liveDestination);
+        $staged = $this->directories->identity($mapping->workspaceSubtree);
+
+        if (PathGuard::isWindows() && ($staged === null || $staged['dev'] === 0 || $staged['ino'] === 0
+            || ($live !== null && ($live['dev'] === 0 || $live['ino'] === 0)))) {
+            throw RestoreFailed::mappingFailed('Windows filesystem identity cannot be proven for live media replacement.');
+        }
 
         if (($live !== null) !== $mapping->liveExists || (! $mapping->liveExists && (file_exists($mapping->liveDestination) || is_link($mapping->liveDestination)))) {
             throw RestoreFailed::mappingFailed(sprintf('the live destination of media root [%s] changed while the restore was prepared', $mapping->name));
@@ -390,7 +397,7 @@ final readonly class LiveRestoreService
             'live_existed' => $live !== null,
             'live_identity' => $live,
             'staged' => $mapping->workspaceSubtree,
-            'staged_identity' => $this->directories->identity($mapping->workspaceSubtree),
+            'staged_identity' => $staged,
             'staged_tree' => $this->directories->fingerprint($mapping->workspaceSubtree, $mapping->liveDestination, $mapping->allowSymlinks),
             'parked' => $live === null ? null : $this->directories->parkedPath($mapping->liveDestination, $restoreUuid),
             'allow_symlinks' => $mapping->allowSymlinks,

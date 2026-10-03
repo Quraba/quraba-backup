@@ -29,11 +29,32 @@ final class ResticConfigTest extends TestCase
 
     public function test_package_defaults_are_valid(): void
     {
-        $config = ResticConfig::fromConfig($this->resticConfig(['restic.managed_binary' => '/srv/app/storage/app/private/quraba-backup/bin/restic']));
+        $config = ResticConfig::fromConfig($this->resticConfig());
 
         self::assertSame(ResticRelease::VERSION, $config->version);
         self::assertSame(ResticRelease::CHECKSUMS[ResticRelease::VERSION]['linux_amd64'], $config->pinnedChecksum(ResticPlatform::of('linux', 'amd64')));
+        self::assertSame(ResticRelease::CHECKSUMS[ResticRelease::VERSION]['windows_amd64'], $config->pinnedChecksum(ResticPlatform::of('windows', 'amd64')));
         self::assertFalse($config->allowSystemBinary);
+    }
+
+    public function test_published_paths_use_portable_password_default_and_platform_binary_name(): void
+    {
+        if (getenv('QURABA_BACKUP_RESTIC_PASSWORD_FILE') !== false || getenv('QURABA_BACKUP_RESTIC_MANAGED_BINARY') !== false) {
+            self::markTestSkipped('Host environment overrides the published defaults.');
+        }
+
+        $published = require dirname(__DIR__, 2).'/config/restic.php';
+        self::assertSame(storage_path('app/private/quraba-secrets/restic-password'), $published['password_file']);
+        self::assertSame(storage_path('app/private/quraba-backup/bin/'.(PHP_OS_FAMILY === 'Windows' ? 'restic.exe' : 'restic')), $published['managed_binary']);
+    }
+
+    public function test_published_configuration_cannot_replace_the_windows_digest(): void
+    {
+        $config = ResticConfig::fromConfig($this->resticConfig([
+            'restic.installer.checksums' => [ResticRelease::VERSION => ['windows_amd64' => str_repeat('a', 64)]],
+        ]));
+
+        self::assertSame(ResticRelease::CHECKSUMS[ResticRelease::VERSION]['windows_amd64'], $config->pinnedChecksum(ResticPlatform::of('windows', 'amd64')));
     }
 
     public function test_the_pinned_version_cannot_be_overridden(): void

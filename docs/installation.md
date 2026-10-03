@@ -49,7 +49,9 @@ php artisan quraba:backup:install-restic
 
 Downloads the package-pinned Restic release (currently **0.19.1**), verifies its SHA-256 against the value
 pinned in the package *and* the release's official `SHA256SUMS`, decompresses it, runs `restic version`,
-and atomically installs it to `storage/app/private/quraba-backup/bin/restic`. Running it again is a no-op
+and installs it to `storage/app/private/quraba-backup/bin/restic` on Linux or `restic.exe` on Windows.
+Linux uses the pinned `.bz2` release; Windows amd64 uses the pinned official ZIP and extracts only its
+expected executable after SHA verification. Running it again is a no-op
 when the correct binary is present. `--force` replaces an existing managed binary explicitly (for example
 after a package upgrade pins a newer Restic). Restic is never upgraded implicitly.
 
@@ -100,3 +102,8 @@ Add ONE cron entry (the package never edits crontab):
 
 On shared hosting that only allows a 5-minute interval, `*/5 * * * *` works: all package schedule times are
 on 5-minute boundaries. Check the registered events with `php artisan schedule:list`.
+
+On Windows, create a Windows Task Scheduler task that runs `php artisan schedule:run` every minute from
+the application directory under the application account. The package runs scheduled backups in the
+foreground on Windows; configure the task to avoid overlapping invocations. The package's `flock` lock
+also refuses overlapping write operations.

@@ -41,8 +41,9 @@ creates no run.
 **Application archive**
 
 1. `mariadb-dump`/`mysqldump` (MySQL and MariaDB) with `--single-transaction --quick` (consistent InnoDB
-   snapshot, streamed to disk). Credentials are passed only through a temporary 0600 option file inside the
+   snapshot, streamed to disk). Credentials are passed only through a temporary private option file inside the
    operation workspace (`--defaults-extra-file`), never in the process arguments, and it is deleted at once.
+   Linux proves `0600`; Windows relies on the restricted private directory ACL, which PHP cannot prove.
 2. The archive (Spatie Laravel Backup's zip task) is **AES-256** encrypted with `QURABA_BACKUP_ARCHIVE_PASSWORD`.
    A missing or blank password refuses the backup before anything is created; there is no unencrypted fallback.
    The plaintext dump never outlives the archive build; `.env` is read in place, never copied.

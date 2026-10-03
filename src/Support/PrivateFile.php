@@ -8,10 +8,10 @@ use Closure;
 use Quraba\Backup\Exceptions\WorkspaceViolation;
 
 /**
- * Creates files that are private to the current OS user BEFORE any secret
- * is written into them.
+ * Creates private files before any secret is written into them. On Windows,
+ * filesystem ACL privacy must also be configured by the operator.
  *
- * On POSIX systems (every supported production host) the file is created
+ * On POSIX systems the file is created
  * exclusively under a 0077 umask, explicitly set to 0600, and then proven:
  * mode exactly 0600, owned by the effective user, a regular file and the
  * very inode that was opened. Any failure — including a chmod that returns
@@ -19,8 +19,9 @@ use Quraba\Backup\Exceptions\WorkspaceViolation;
  * permissive file.
  *
  * Windows has no POSIX modes (NTFS ACLs apply and the file lives inside the
- * package's private workspace); it is a development platform only, so the
- * mode proof is skipped there.
+ * package's private workspace); a mode proof is impossible there. The path
+ * is still checked as a regular, non-link file, but the inherited ACL must
+ * be restricted by the operator.
  */
 final class PrivateFile
 {
@@ -47,8 +48,22 @@ final class PrivateFile
         }
 
         if (! $strict) {
-            // Windows development: best effort, NTFS ACLs of the private workspace apply.
+            // Windows ACLs are inherited; POSIX chmod cannot prove privacy.
             $chmod($path, 0600);
+
+            if (is_link($path) || ! is_file($path) || ! is_writable($path)) {
+                fclose($handle);
+                @unlink($path);
+                throw new WorkspaceViolation('The private file path is not a writable regular file.', 'security.private_file');
+            }
+
+            try {
+                self::assertStillPrivate($path, $handle);
+            } catch (WorkspaceViolation $exception) {
+                fclose($handle);
+                @unlink($path);
+                throw $exception;
+            }
 
             return $handle;
         }
@@ -70,6 +85,18 @@ final class PrivateFile
     public static function assertStillPrivate(string $path, $handle): void
     {
         if (PathGuard::isWindows()) {
+            clearstatcache(true, $path);
+            if (is_link($path) || ! is_file($path)) {
+                throw new WorkspaceViolation('The private file path changed after creation.', 'security.private_file');
+            }
+
+            $named = @stat($path);
+            $opened = @fstat($handle);
+            if ($named === false || $opened === false || $named['ino'] === 0 || $named['dev'] === 0
+                || $named['ino'] !== $opened['ino'] || $named['dev'] !== $opened['dev']) {
+                throw new WorkspaceViolation('The private file identity cannot be proven on this Windows filesystem.', 'security.private_file');
+            }
+
             return;
         }
 

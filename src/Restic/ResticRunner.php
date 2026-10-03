@@ -11,6 +11,7 @@ use Quraba\Backup\Exceptions\ResticCommandFailed;
 use Quraba\Backup\Exceptions\ResticUnavailable;
 use Quraba\Backup\Restore\Live\MediaStagingArea;
 use Quraba\Backup\Support\PackagePaths;
+use Quraba\Backup\Support\PathGuard;
 use Quraba\Backup\Support\Process\ChildEnvironment;
 use Quraba\Backup\Support\Process\ProcessFactory;
 use Quraba\Backup\Workspace\OperationWorkspace;
@@ -414,7 +415,23 @@ final class ResticRunner
         clearstatcache(true, $path);
         $stat = @stat($path);
 
-        return $stat === false ? null : implode(':', [$stat['ino'], $stat['size'], $stat['mtime'], $stat['ctime']]);
+        if ($stat === false) {
+            return null;
+        }
+
+        // PHP can report zero or unstable inode values on Windows. Include
+        // content identity so a replaced executable is never trusted from a
+        // stale per-process version probe.
+        $parts = [$stat['ino'], $stat['size'], $stat['mtime'], $stat['ctime']];
+        if (PathGuard::isWindows()) {
+            $digest = @hash_file('sha256', $path);
+            if ($digest === false) {
+                return null;
+            }
+            $parts[] = $digest;
+        }
+
+        return implode(':', $parts);
     }
 
     private function workingDirectory(): string

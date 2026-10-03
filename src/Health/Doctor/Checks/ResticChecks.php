@@ -9,6 +9,7 @@ use Quraba\Backup\Health\CheckResult;
 use Quraba\Backup\Health\Doctor\DoctorCheck;
 use Quraba\Backup\Health\ResticHealthService;
 use Quraba\Backup\Restic\Installer\Bzip2Decompressor;
+use Quraba\Backup\Restic\PlatformDetector;
 use Quraba\Backup\Restic\ResticConfig;
 use Throwable;
 
@@ -36,10 +37,16 @@ final readonly class ResticChecks implements DoctorCheck
 
         $results = [CheckResult::pass('restic.config', 'Restic configuration', sprintf('Pinned Restic version %s.', $config->version))];
 
-        $decompressor = $this->container->make(Bzip2Decompressor::class);
-        $results[] = $decompressor->isAvailable()
-            ? CheckResult::pass('restic.installer_decompression', 'Installer decompression', 'Available via '.$decompressor->method().'.')
-            : CheckResult::warn('restic.installer_decompression', 'Installer decompression', 'Neither ext-bz2 nor a bzip2 binary is available; quraba:backup:install-restic cannot unpack the release.');
+        if ($this->container->make(PlatformDetector::class)->osFamily() === 'Windows') {
+            $results[] = extension_loaded('zip')
+                ? CheckResult::pass('restic.installer_decompression', 'Installer extraction', 'ZIP extension available.')
+                : CheckResult::fail('restic.installer_decompression', 'Installer extraction', 'ZIP extension is required to unpack the Windows release.');
+        } else {
+            $decompressor = $this->container->make(Bzip2Decompressor::class);
+            $results[] = $decompressor->isAvailable()
+                ? CheckResult::pass('restic.installer_decompression', 'Installer decompression', 'Available via '.$decompressor->method().'.')
+                : CheckResult::warn('restic.installer_decompression', 'Installer decompression', 'Neither ext-bz2 nor a bzip2 binary is available; quraba:backup:install-restic cannot unpack the release.');
+        }
 
         // Binary failures already carry the "php artisan quraba:backup:install-restic" guidance.
         return [...$results, ...$this->container->make(ResticHealthService::class)->check()->checks];

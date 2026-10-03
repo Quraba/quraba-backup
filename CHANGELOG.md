@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased — v1.1.0
+
+- Add Windows amd64 support alongside Linux amd64/arm64. The managed installer verifies the official
+  Restic 0.19.1 Windows ZIP against the package-pinned SHA-256 and official checksum manifest, extracts
+  only its expected executable, verifies version and GOOS/GOARCH, and installs `restic.exe` safely.
+- Make doctor, paths, executable verification and password-file diagnostics platform aware. Preserve the
+  portable Laravel default `storage/app/private/quraba-secrets/restic-password`.
+- Add a real Windows PHP 8.5 CI job for the installer, full suite, repository operations, media backup
+  and exact restore; retain the existing Linux and B2 gates. Windows ACL privacy and journal-directory
+  syncing are documented as platform limitations.
+
 ## v1.0.1 — 2026-10-02
 
 - Allow Laravel applications already using Guzzle 8 to install Quraba Backup. The v1.0.0

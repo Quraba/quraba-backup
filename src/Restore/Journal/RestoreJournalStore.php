@@ -19,10 +19,11 @@ use Throwable;
  * `{private root}/journal/{restore_uuid}.json`.
  *
  *  - outside the application database;
- *  - private: the directory is 0700, every version is first written to a
- *    file proven 0600 and owned by the current user;
+ *  - private on POSIX: the directory is 0700, every version is first written
+ *    to a file proven 0600 and owned by the current user; Windows needs a
+ *    restricted inherited ACL, which PHP cannot prove;
  *  - atomic: write a temporary file, flush and fsync it, rename it over the
- *    journal, fsync the directory (where the platform allows), then read the
+ *    journal, fsync the directory (on POSIX), then read the
  *    journal back and compare it;
  *  - forward only: a version is written only when it is the direct successor
  *    of the version on disk ({@see RestoreJournal::assertSuccessorOf()});

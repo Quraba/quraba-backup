@@ -17,6 +17,50 @@ permissions:
   contents: read
 
 jobs:
+  windows:
+    name: Windows (PHP 8.5, real Restic)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
+        with:
+          php-version: '8.5'
+          extensions: bz2, curl, json, mbstring, openssl, pdo, pdo_sqlite, pdo_mysql, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Code style (Pint)
+        run: vendor/bin/pint --test
+
+      - name: Static analysis (PHPStan max)
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      - name: Install official Windows Restic through package installer
+        shell: pwsh
+        run: |
+          $env:QURABA_BACKUP_TEST_WINDOWS_INSTALLER = '1'
+          $env:QURABA_BACKUP_TEST_WINDOWS_EXPORT_BINARY = Join-Path $env:RUNNER_TEMP 'restic.exe'
+          php vendor/bin/phpunit --fail-on-skipped --fail-on-incomplete tests/Integration/RealWindowsInstallerTest.php
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Add-Content -Path $env:GITHUB_ENV -Value "QURABA_BACKUP_TEST_RESTIC_BINARY=$env:QURABA_BACKUP_TEST_WINDOWS_EXPORT_BINARY"
+
+      - name: Full PHPUnit suite
+        run: vendor/bin/phpunit
+
+      - name: Real Windows repository, backup and exact media restore
+        run: >-
+          vendor/bin/phpunit --fail-on-skipped --fail-on-incomplete
+          tests/Integration/RealResticRepositoryTest.php
+          tests/Integration/RealResticMediaTest.php
+
   quality:
     name: Quality (PHP ${{ matrix.php }}, ${{ matrix.database }})
     runs-on: ubuntu-24.04

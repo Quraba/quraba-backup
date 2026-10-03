@@ -1,6 +1,9 @@
 
 # Quraba Backup — Implementation Master Plan
 
+> Historical v1 implementation plan. The current platform contract, including upcoming Windows amd64
+> support in v1.1.0, is documented in the README and operational guides.
+
 **Package:** `quraba/quraba-backup`  
 **Namespace:** `Quraba\Backup`  
 **Target:** Single-application Laravel backup and disaster recovery  

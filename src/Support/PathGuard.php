@@ -25,7 +25,7 @@ final class PathGuard
             return false;
         }
 
-        if (str_starts_with($path, '/')) {
+        if (! self::isWindows() && str_starts_with($path, '/')) {
             return true;
         }
 
@@ -47,6 +47,10 @@ final class PathGuard
             throw new WorkspaceViolation(sprintf('Path [%s] must be absolute.', $path));
         }
 
+        if (self::isWindows() && (str_starts_with($path, '\\\\') || str_starts_with($path, '//'))) {
+            throw new WorkspaceViolation('UNC and device paths are not supported for package paths.');
+        }
+
         $unified = str_replace('\\', '/', $path);
         $prefix = '';
 
@@ -64,6 +68,10 @@ final class PathGuard
 
             if ($segment === '..') {
                 throw new WorkspaceViolation(sprintf('Path [%s] must not contain ".." segments.', $path));
+            }
+
+            if (self::isWindows() && (str_contains($segment, ':') || preg_match('/[. ]$/', $segment) === 1)) {
+                throw new WorkspaceViolation(sprintf('Path [%s] has an unsafe Windows segment.', $path));
             }
 
             $segments[] = $segment;
@@ -109,7 +117,7 @@ final class PathGuard
     {
         $path = str_replace('\\', '/', $path);
 
-        return preg_match('~^[A-Za-z]:~', $path) === 1 ? strtoupper($path[0]).substr($path, 1) : $path;
+        return self::isWindows() ? strtolower($path) : $path;
     }
 
     /**

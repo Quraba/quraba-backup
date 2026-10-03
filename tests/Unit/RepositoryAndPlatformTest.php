@@ -13,6 +13,8 @@ use Quraba\Backup\Restic\Installer\ChecksumManifest;
 use Quraba\Backup\Restic\PlatformDetector;
 use Quraba\Backup\Restic\RepositoryLocation;
 use Quraba\Backup\Restic\ResticPlatform;
+use Quraba\Backup\Restic\ResticRelease;
+use Quraba\Backup\Restic\ResticReleaseAsset;
 use Quraba\Backup\Restic\StorageCredentials;
 
 final class RepositoryAndPlatformTest extends TestCase
@@ -56,9 +58,10 @@ final class RepositoryAndPlatformTest extends TestCase
         self::assertSame('eu-central-003', $s3->region);
         self::assertSame('bucket-1', $s3->bucket);
 
-        $local = RepositoryLocation::parse('/srv/restic-test-repo', null);
+        $path = PHP_OS_FAMILY === 'Windows' ? 'C:/restic-test-repo' : '/srv/restic-test-repo';
+        $local = RepositoryLocation::parse($path, null);
         self::assertTrue($local->isLocal);
-        self::assertSame('/srv/restic-test-repo', $local->repository);
+        self::assertSame($path, $local->repository);
     }
 
     public function test_endpoint_must_be_bare_https(): void
@@ -93,6 +96,8 @@ final class RepositoryAndPlatformTest extends TestCase
         yield 'linux amd64' => ['Linux', 'amd64', 'linux_amd64'];
         yield 'linux aarch64' => ['Linux', 'aarch64', 'linux_arm64'];
         yield 'linux arm64' => ['Linux', 'arm64', 'linux_arm64'];
+        yield 'windows amd64' => ['Windows', 'AMD64', 'windows_amd64'];
+        yield 'windows x86_64' => ['Windows', 'x86_64', 'windows_amd64'];
     }
 
     #[DataProvider('platforms')]
@@ -101,12 +106,24 @@ final class RepositoryAndPlatformTest extends TestCase
         self::assertSame($key, (new PlatformDetector($os, $machine))->detect()->key());
     }
 
+    public function test_release_assets_have_platform_specific_container_and_executable_names(): void
+    {
+        $windows = ResticReleaseAsset::forPlatform(ResticPlatform::of('windows', 'amd64'), ResticRelease::ARCHIVE_TEMPLATE);
+        self::assertSame('zip', $windows->format);
+        self::assertSame('restic_0.19.1_windows_amd64.exe', $windows->archiveExecutable);
+        self::assertSame('restic.exe', $windows->managedExecutable);
+
+        $linux = ResticReleaseAsset::forPlatform(ResticPlatform::of('linux', 'arm64'), ResticRelease::ARCHIVE_TEMPLATE);
+        self::assertSame('bz2', $linux->format);
+        self::assertSame('restic', $linux->managedExecutable);
+    }
+
     /**
      * @return iterable<string, array{string, string}>
      */
     public static function unsupportedPlatforms(): iterable
     {
-        yield 'windows' => ['Windows', 'AMD64'];
+        yield '32-bit windows' => ['Windows', 'i686'];
         yield 'macos' => ['Darwin', 'arm64'];
         yield '32-bit linux' => ['Linux', 'i686'];
         yield 'linux armv7' => ['Linux', 'armv7l'];

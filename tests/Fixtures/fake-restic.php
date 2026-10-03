@@ -121,7 +121,7 @@ switch ($command) {
             'message_type' => 'version',
             'version' => $scenario['version'] ?? '0.19.1',
             'go_version' => 'go1.25.1',
-            'go_os' => $scenario['go_os'] ?? 'linux',
+            'go_os' => $scenario['go_os'] ?? (PHP_OS_FAMILY === 'Windows' ? 'windows' : 'linux'),
             'go_arch' => $scenario['go_arch'] ?? 'amd64',
         ])."\n");
 

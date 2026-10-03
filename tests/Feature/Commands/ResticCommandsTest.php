@@ -95,7 +95,7 @@ final class ResticCommandsTest extends TestCase
         [$exit, $report] = $this->callJson('quraba:backup:restic:health');
 
         self::assertSame(0, $exit);
-        self::assertSame('healthy', $report['state']);
+        self::assertSame(PHP_OS_FAMILY === 'Windows' ? 'degraded' : 'healthy', $report['state']);
         $statuses = $this->statuses($report);
         self::assertSame('pass', $statuses['restic.version']);
         self::assertSame('pass', $statuses['restic.repository_initialized']);
@@ -189,6 +189,11 @@ final class ResticCommandsTest extends TestCase
         }
 
         self::assertSame('pass', $statuses['locking.cross_process']);
+        self::assertSame('pass', $statuses['runtime.os']);
+        self::assertSame('pass', $statuses['runtime.architecture']);
+        if (PHP_OS_FAMILY === 'Windows') {
+            self::assertSame('skip', $statuses['runtime.ext_posix']);
+        }
         self::assertSame('pass', $statuses['restic.version']);
         // The test database is SQLite, which is not a supported production driver.
         self::assertSame('fail', $statuses['database.driver']);

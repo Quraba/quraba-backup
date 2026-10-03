@@ -36,7 +36,7 @@ return [
     */
     'binary' => env('QURABA_BACKUP_RESTIC_BINARY'),
 
-    'managed_binary' => env('QURABA_BACKUP_RESTIC_MANAGED_BINARY', storage_path('app/private/quraba-backup/bin/restic')),
+    'managed_binary' => env('QURABA_BACKUP_RESTIC_MANAGED_BINARY', storage_path('app/private/quraba-backup/bin/'.(PHP_OS_FAMILY === 'Windows' ? 'restic.exe' : 'restic'))),
 
     'allow_system_binary' => (bool) env('QURABA_BACKUP_RESTIC_ALLOW_SYSTEM_BINARY', false),
 
@@ -66,11 +66,15 @@ return [
     ],
 
     /*
-    | File containing the repository password (mode 0600, outside the public
-    | directory). Keep an off-server copy: without it the repository cannot
-    | be recovered by anyone.
+    | File containing the repository password, outside the public directory.
+    | On Linux it must be private (0600); Windows uses inherited filesystem
+    | ACLs, which PHP cannot prove equivalent to Unix permissions. Keep an
+    | off-server copy: without it the repository cannot be recovered.
     */
-    'password_file' => env('QURABA_BACKUP_RESTIC_PASSWORD_FILE'),
+    'password_file' => env(
+        'QURABA_BACKUP_RESTIC_PASSWORD_FILE',
+        storage_path('app/private/quraba-secrets/restic-password'),
+    ),
 
     // null: {quraba-backup.paths.root}/cache/restic
     'cache_dir' => env('QURABA_BACKUP_RESTIC_CACHE_DIR'),

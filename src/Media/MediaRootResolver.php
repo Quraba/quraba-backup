@@ -189,10 +189,11 @@ final readonly class MediaRootResolver
             throw new MediaPathUnsafe(sprintf('Media root [%s] is the filesystem root.', $name));
         }
 
-        $home = getenv('HOME');
-
-        if (is_string($home) && $home !== '' && ($realHome = PathGuard::real($home)) !== null && PathGuard::isWithin($realHome, $real)) {
-            throw new MediaPathUnsafe(sprintf('Media root [%s] is or contains the HOME directory.', $name));
+        foreach (PathGuard::isWindows() ? ['USERPROFILE', 'HOME'] : ['HOME'] as $homeVariable) {
+            $home = getenv($homeVariable);
+            if (is_string($home) && $home !== '' && ($realHome = PathGuard::real($home)) !== null && PathGuard::isWithin($realHome, $real)) {
+                throw new MediaPathUnsafe(sprintf('Media root [%s] is or contains the user home directory.', $name));
+            }
         }
 
         $base = PathGuard::real($this->basePath) ?? $this->basePath;

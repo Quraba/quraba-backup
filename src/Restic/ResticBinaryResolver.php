@@ -29,6 +29,7 @@ final readonly class ResticBinaryResolver
     public function __construct(
         private ResticConfig $config,
         private ExecutableFinder $finder = new ExecutableFinder,
+        private PlatformDetector $platforms = new PlatformDetector,
     ) {}
 
     /**
@@ -95,6 +96,18 @@ final readonly class ResticBinaryResolver
                 $version->version,
                 $this->config->version,
                 $source === BinarySource::Managed ? ' Run "php artisan quraba:backup:install-restic --force" to install the pinned version.' : '',
+            ));
+        }
+
+        $platform = $this->platforms->detect();
+        if ($version->goOs !== $platform->os || $version->goArch !== $platform->arch) {
+            throw new ResticUnavailable(sprintf(
+                'The %s Restic binary [%s] reports %s/%s instead of this host (%s).',
+                $source->value,
+                $path,
+                $version->goOs ?? 'unknown',
+                $version->goArch ?? 'unknown',
+                $platform->label(),
             ));
         }
 

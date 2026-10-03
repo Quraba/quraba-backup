@@ -329,6 +329,8 @@ final class RestorePrimitivesTest extends TestCase
         // Different devices are never "the same filesystem", whatever rename would do.
         $crossDevice = new MediaStaging($this->directory.'/public', fn (string $path): ?int => str_ends_with($path, '/a') ? 1 : 2);
         self::assertFalse($crossDevice->sameFilesystem($this->directory.'/a', $this->directory.'/b'));
+        $unknownDevice = new MediaStaging($this->directory.'/public', static fn (string $path): ?int => 0);
+        self::assertFalse($unknownDevice->sameFilesystem($this->directory.'/a', $this->directory.'/b'));
         self::assertSame(['.', '..'], scandir($this->directory.'/a'));
     }
 

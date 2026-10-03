@@ -21,8 +21,8 @@ final readonly class PlatformDetector
     }
 
     /**
-     * Shared hosts often disable php_uname(); fall back to the kernel's
-     * architecture file, and report "unknown" (which is refused) otherwise.
+     * Shared hosts sometimes disable php_uname(). Use the platform's own
+     * architecture report when available, otherwise refuse an unknown host.
      */
     public function machine(): string
     {
@@ -34,6 +34,12 @@ final readonly class PlatformDetector
 
         if (function_exists('php_uname') && ! in_array('php_uname', $disabled, true)) {
             return php_uname('m');
+        }
+
+        if ($this->osFamily() === 'Windows') {
+            $architecture = getenv('PROCESSOR_ARCHITECTURE');
+
+            return is_string($architecture) && $architecture !== '' ? $architecture : 'unknown';
         }
 
         $arch = @file_get_contents('/proc/sys/kernel/arch');

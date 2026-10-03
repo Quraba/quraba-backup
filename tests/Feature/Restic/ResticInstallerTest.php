@@ -43,7 +43,11 @@ final class ResticInstallerTest extends TestCase
     {
         $script = (string) file_get_contents(dirname(__DIR__, 2).'/Fixtures/fake-restic.php');
 
-        return str_replace("\$scenario['version'] ?? '0.19.1'", "\$scenario['version'] ?? '{$version}'", $script);
+        return str_replace(
+            ["\$scenario['version'] ?? '0.19.1'", "\$scenario['go_os'] ?? (PHP_OS_FAMILY === 'Windows' ? 'windows' : 'linux')"],
+            ["\$scenario['version'] ?? '{$version}'", "\$scenario['go_os'] ?? 'linux'"],
+            $script,
+        );
     }
 
     /**
@@ -131,6 +135,22 @@ final class ResticInstallerTest extends TestCase
         self::assertFileDoesNotExist($this->target());
     }
 
+    public function test_force_failure_keeps_the_previously_verified_binary(): void
+    {
+        $this->installer()->install();
+        $before = hash_file('sha256', $this->target());
+
+        try {
+            $this->installer(pinned: str_repeat('e', 64))->install(force: true);
+            self::fail('A bad release manifest must refuse force replacement.');
+        } catch (ResticInstallationFailed $exception) {
+            self::assertSame('restic.checksum_mismatch', $exception->failureCode());
+        }
+
+        self::assertSame($before, hash_file('sha256', $this->target()));
+        $this->assertNoStagingLeft();
+    }
+
     public function test_wrong_version_binary_is_never_installed(): void
     {
         try {
@@ -207,7 +227,7 @@ final class ResticInstallerTest extends TestCase
     public function test_unsupported_operating_systems_are_refused(): void
     {
         $this->expectException(EnvironmentUnsupported::class);
-        $this->installer(os: 'Windows', machine: 'AMD64')->install();
+        $this->installer(os: 'Darwin', machine: 'ARM64')->install();
     }
 
     public function test_install_command(): void

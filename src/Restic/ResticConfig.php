@@ -86,6 +86,12 @@ final readonly class ResticConfig
      */
     public function pinnedChecksum(ResticPlatform $platform): ?string
     {
+        // The Windows release digest is a code-owned trust anchor. Published
+        // configuration cannot substitute a different Windows executable.
+        if ($platform->os === 'windows') {
+            return ResticRelease::CHECKSUMS[$this->version][$platform->key()] ?? null;
+        }
+
         return $this->checksums[$this->version][$platform->key()] ?? null;
     }
 

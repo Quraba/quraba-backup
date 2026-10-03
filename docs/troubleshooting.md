@@ -18,7 +18,7 @@ Every package error carries a machine-readable code in brackets, e.g. `[restic.w
 | `lock.unavailable` | `flock` could not be established (unwritable lock directory or a filesystem without locking). Use a local path for `QURABA_BACKUP_LOCK_PATH`. |
 | `process.timeout` | An operation exceeded its configured timeout; raise the specific `QURABA_BACKUP_RESTIC_TIMEOUT_*` value. |
 | `process.launch_failed` | A binary could not be executed (missing, not executable, wrong architecture, `proc_open` disabled). |
-| Doctor: "Password file … accessible by other users" | `chmod 600` the password file. |
+| Doctor: "Password file … accessible by other users" | On Linux, `chmod 600` the password file. On Windows, restrict NTFS ACLs on the file and parent directory; PHP cannot prove equivalent privacy. |
 | Doctor: "second process acquired a lock" | The lock directory is on a filesystem without working `flock` (e.g. some NFS mounts). Move it. |
 | Abandoned workspaces | `php artisan quraba:backup:workspace:list`, then `quraba:backup:workspace:cleanup --execute`. Active workspaces are never removed. A retained restore workspace requires journal resolution and `workspace:cleanup --restore=UUID --execute`. |
 | `archive.password_missing` | `QURABA_BACKUP_ARCHIVE_PASSWORD` is missing or blank. Archives contain `.env` and are never created unencrypted. |

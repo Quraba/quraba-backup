@@ -29,6 +29,7 @@ final class ResticRelease
         '0.19.1' => [
             'linux_amd64' => 'f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c',
             'linux_arm64' => 'a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465',
+            'windows_amd64' => 'da948ad707ed690426473aaba2046cd61f8f90f6f0e7dab6be0d5796531de67d',
         ],
     ];
 
@@ -36,6 +37,8 @@ final class ResticRelease
 
     /** Relative release asset names; {version}, {os} and {arch} are substituted. */
     public const string ARCHIVE_TEMPLATE = 'v{version}/restic_{version}_{os}_{arch}.bz2';
+
+    public const string WINDOWS_ARCHIVE_TEMPLATE = 'v{version}/restic_{version}_{os}_{arch}.zip';
 
     public const string CHECKSUM_MANIFEST_TEMPLATE = 'v{version}/SHA256SUMS';
 

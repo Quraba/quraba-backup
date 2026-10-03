@@ -14,6 +14,7 @@ final readonly class ResticPlatform
     /** Platforms the installer knows how to handle. */
     private const array SUPPORTED = [
         'linux' => ['amd64', 'arm64'],
+        'windows' => ['amd64'],
     ];
 
     private function __construct(
@@ -25,7 +26,7 @@ final readonly class ResticPlatform
     {
         if (! in_array($arch, self::SUPPORTED[$os] ?? [], true)) {
             throw new EnvironmentUnsupported(sprintf(
-                'Restic installation is not supported on %s/%s. Supported: linux/amd64 (x86_64) and linux/arm64. Install a verified Restic %s binary manually and set QURABA_BACKUP_RESTIC_BINARY if this host must be used.',
+                'Restic installation is not supported on %s/%s. Supported: linux/amd64, linux/arm64 and windows/amd64. Install a verified Restic %s binary manually and set QURABA_BACKUP_RESTIC_BINARY if this host must be used.',
                 $os,
                 $arch,
                 ResticRelease::VERSION,

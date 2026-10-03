@@ -75,7 +75,7 @@ final readonly class StorageChecks implements DoctorCheck
 
         return $existing === $directory || PathGuard::real($existing) === PathGuard::real($directory)
             ? CheckResult::pass($id, $label, sprintf('[%s] is writable.', $directory))
-            : CheckResult::pass($id, $label, sprintf('[%s] does not exist yet; its parent [%s] is writable, so it will be created (0700) on first use.', $directory, $existing));
+            : CheckResult::pass($id, $label, sprintf('[%s] does not exist yet; its parent [%s] is writable, so it will be created on first use%s.', $directory, $existing, PathGuard::isWindows() ? ' with inherited Windows ACLs' : ' with mode 0700'));
     }
 
     private function workspace(): CheckResult

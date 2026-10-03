@@ -29,7 +29,7 @@ Redis, queue worker or daemon.
 - Restic's own repository locks are never removed automatically. `quraba:backup:restic:health` reports them.
 - On POSIX hosts, scheduled backups use Laravel's `runInBackground()` by default, so `schedule:run` can
   continue other tasks. `QURABA_BACKUP_SCHEDULE_BACKGROUND=false` keeps foreground behavior; `true`
-  requires supported background execution. Windows development falls back in `auto` mode. Manual CLI
+  requires supported background execution. Windows runs in the foreground in `auto` mode. Manual CLI
   backups always run in the foreground. No queue worker, Supervisor or Redis is needed.
 - Scheduled backups pause during unrelated Laravel maintenance mode by default. Set
   `QURABA_BACKUP_SCHEDULE_IN_MAINTENANCE=true` only when a deployment policy makes that safe.

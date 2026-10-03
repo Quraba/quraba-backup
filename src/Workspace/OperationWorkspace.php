@@ -65,7 +65,7 @@ final class OperationWorkspace
     }
 
     /**
-     * Creates (0700) and returns a contained directory inside an area.
+     * Creates and returns a contained directory (0700 on POSIX).
      */
     public function directory(WorkspaceArea $area, string $relative): string
     {

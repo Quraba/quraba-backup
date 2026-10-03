@@ -16,9 +16,11 @@ use Quraba\Backup\Exceptions\ResticVersionMismatch;
 use Quraba\Backup\Restic\PlatformDetector;
 use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Restic\ResticPlatform;
+use Quraba\Backup\Restic\ResticReleaseAsset;
 use Quraba\Backup\Restic\ResticRunner;
 use Quraba\Backup\Restic\ResticVersionInfo;
 use Quraba\Backup\Support\PackagePaths;
+use Quraba\Backup\Support\PathGuard;
 use Symfony\Component\Uid\Ulid;
 use Throwable;
 
@@ -31,9 +33,9 @@ use Throwable;
  *
  *   1. detect OS/CPU and require a package-pinned SHA-256 for it;
  *   2. download the official SHA256SUMS; its entry must equal the pinned digest;
- *   3. download the .bz2 release; its SHA-256 must equal the pinned digest
- *      BEFORE anything is decompressed or executed;
- *   4. decompress with a size limit, chmod 0700;
+ *   3. download the platform's .bz2 or ZIP release; its SHA-256 must equal
+ *      the pinned digest BEFORE anything is extracted or executed;
+ *   4. extract the one expected executable with a size limit (chmod 0700 on Linux);
  *   5. execute `restic version` (via the ResticRunner) and require the exact
  *      pinned version and platform;
  *   6. atomically rename over the managed binary and verify it again.
@@ -54,6 +56,7 @@ final readonly class ResticInstaller
         private PlatformDetector $platforms,
         private ReleaseDownloader $downloader,
         private Bzip2Decompressor $decompressor,
+        private VerifiedZipExtractor $zipExtractor,
         private LockManager $locks,
         private LoggerInterface $logger,
     ) {}
@@ -64,11 +67,12 @@ final readonly class ResticInstaller
     public function plan(): array
     {
         $platform = $this->platforms->detect();
+        $asset = ResticReleaseAsset::forPlatform($platform, $this->config->archiveTemplate);
 
         return [
             'version' => $this->config->version,
             'platform' => $platform->label(),
-            'archive_url' => $this->url($this->config->archiveTemplate, $platform),
+            'archive_url' => $this->url($asset->archiveTemplate, $platform),
             'manifest_url' => $this->url($this->config->checksumManifestTemplate, $platform),
             'target' => $this->config->managedBinary,
             'pinned_sha256' => $this->config->pinnedChecksum($platform),
@@ -85,6 +89,7 @@ final readonly class ResticInstaller
         }
 
         $target = $this->config->managedBinary;
+        $asset = ResticReleaseAsset::forPlatform($platform, $this->config->archiveTemplate);
         $lock = $this->locks->acquire(LockName::ResticInstaller, 'restic installation');
 
         try {
@@ -94,7 +99,11 @@ final readonly class ResticInstaller
                 return $this->existingInstallation($target, $platform);
             }
 
-            if (is_dir($target) && ! is_link($target)) {
+            if (is_link($target)) {
+                throw new ResticInstallationFailed('The managed binary path is a link; refusing to replace it.');
+            }
+
+            if (is_dir($target)) {
                 throw new ResticInstallationFailed(sprintf('The managed binary path [%s] is a directory.', $target));
             }
 
@@ -108,7 +117,7 @@ final readonly class ResticInstaller
             }
 
             try {
-                $result = $this->installInto($staging, $target, $platform, $expected, $existed);
+                $result = $this->installInto($staging, $target, $platform, $asset, $expected, $existed);
             } finally {
                 $this->deleteStaging($staging);
             }
@@ -145,9 +154,9 @@ final readonly class ResticInstaller
         return new InstallResult(InstallOutcome::AlreadyInstalled, $target, $platform, $version);
     }
 
-    private function installInto(string $staging, string $target, ResticPlatform $platform, string $expected, bool $existed): InstallResult
+    private function installInto(string $staging, string $target, ResticPlatform $platform, ResticReleaseAsset $asset, string $expected, bool $existed): InstallResult
     {
-        $archiveName = basename($this->url($this->config->archiveTemplate, $platform));
+        $archiveName = basename($this->url($asset->archiveTemplate, $platform));
 
         // 1. Official checksum manifest must agree with the pinned digest.
         $manifestPath = $staging.'/SHA256SUMS';
@@ -164,7 +173,7 @@ final readonly class ResticInstaller
 
         // 2. Archive digest is verified before any decompression or execution.
         $archivePath = $staging.'/'.$archiveName;
-        $this->downloader->download($this->url($this->config->archiveTemplate, $platform), $archivePath, $this->config->maxArchiveBytes);
+        $this->downloader->download($this->url($asset->archiveTemplate, $platform), $archivePath, $this->config->maxArchiveBytes);
 
         $actual = hash_file('sha256', $archivePath);
 
@@ -173,10 +182,14 @@ final readonly class ResticInstaller
         }
 
         // 3. Decompress with a size limit and make it executable by the owner only.
-        $stagedBinary = $staging.'/restic';
-        $this->decompressor->decompress($archivePath, $stagedBinary, $this->config->maxBinaryBytes);
+        $stagedBinary = $staging.'/'.$asset->managedExecutable;
+        if ($asset->format === 'zip') {
+            $this->zipExtractor->extract($archivePath, $stagedBinary, $asset->archiveExecutable, $this->config->maxBinaryBytes);
+        } else {
+            $this->decompressor->decompress($archivePath, $stagedBinary, $this->config->maxBinaryBytes);
+        }
 
-        if (! @chmod($stagedBinary, 0700)) {
+        if ($platform->os !== 'windows' && ! @chmod($stagedBinary, 0700)) {
             throw new ResticInstallationFailed('Could not mark the staged Restic binary executable.');
         }
 
@@ -212,7 +225,7 @@ final readonly class ResticInstaller
             throw new ResticVersionMismatch(sprintf('The downloaded binary reports Restic %s instead of the pinned %s; refusing to install it.', $version->version, $this->config->version));
         }
 
-        if ($version->goOs !== null && $version->goArch !== null && ($version->goOs !== $platform->os || $version->goArch !== $platform->arch)) {
+        if ($version->goOs !== $platform->os || $version->goArch !== $platform->arch) {
             throw new ResticInstallationFailed(sprintf('The downloaded binary is built for %s/%s, not %s.', $version->goOs, $version->goArch, $platform->label()));
         }
     }
@@ -229,7 +242,13 @@ final readonly class ResticInstaller
     private function binaryDirectory(string $target): string
     {
         try {
-            return PackagePaths::ensureDirectory(dirname($target));
+            $directory = PackagePaths::ensureDirectory(dirname($target));
+            $real = PathGuard::real($directory);
+            if ($real === null || (PathGuard::isWindows() && PathGuard::comparable($real) !== PathGuard::comparable(PathGuard::normalizeAbsolute($directory)))) {
+                throw new ResticInstallationFailed('The managed binary directory traverses a link or reparse point.');
+            }
+
+            return $directory;
         } catch (ConfigurationException $exception) {
             throw new ResticInstallationFailed($exception->getMessage());
         }
@@ -242,7 +261,7 @@ final readonly class ResticInstaller
     private function removeStaleStaging(string $directory): void
     {
         foreach (@scandir($directory) ?: [] as $entry) {
-            if (str_starts_with($entry, self::STAGING_PREFIX) && is_dir($directory.'/'.$entry) && ! is_link($directory.'/'.$entry)) {
+            if (preg_match('/^\.restic-install-[0-9A-HJKMNP-TV-Z]{26}$/', $entry) === 1 && is_dir($directory.'/'.$entry) && ! is_link($directory.'/'.$entry)) {
                 $this->deleteStaging($directory.'/'.$entry);
             }
         }
@@ -254,6 +273,12 @@ final readonly class ResticInstaller
             return;
         }
 
+        $realRoot = PathGuard::real($staging);
+        $realParent = PathGuard::real(dirname($staging));
+        if ($realRoot === null || $realParent === null || PathGuard::comparable($realRoot) !== PathGuard::comparable($realParent.'/'.basename($staging))) {
+            return;
+        }
+
         foreach (@scandir($staging) ?: [] as $entry) {
             if ($entry === '.' || $entry === '..') {
                 continue;
@@ -262,6 +287,10 @@ final readonly class ResticInstaller
             $path = $staging.'/'.$entry;
 
             if (is_dir($path) && ! is_link($path)) {
+                $real = PathGuard::real($path);
+                if ($real === null || ! PathGuard::isWithin($real, $realRoot)) {
+                    continue;
+                }
                 $this->deleteStaging($path);
 
                 continue;

@@ -59,8 +59,10 @@ other Restic backends are refused.
 
 ## Restic repository password
 
-Create a strong random password in a file readable only by the PHP user, **outside** the public directory
-(ideally outside the application):
+Create a strong random password in a file readable only by the PHP user, **outside** the public directory.
+The portable default is `storage/app/private/quraba-secrets/restic-password`; no environment path is needed
+when the file is there. Keep this path out of the consumer application's version control and deployment
+artifacts. On Linux, an optional path outside the application is also suitable:
 
 ```bash
 mkdir -p ~/.quraba-backup && chmod 700 ~/.quraba-backup
@@ -73,8 +75,10 @@ QURABA_BACKUP_RESTIC_PASSWORD_FILE=/home/account/.quraba-backup/restic-password
 ```
 
 **Store a copy of this password outside the server.** Without it, nobody — including Quraba — can open the
-repository after a server loss. Restic receives only the file path (`RESTIC_PASSWORD_FILE`). Files readable
-by other users are refused.
+repository after a server loss. Restic receives only the file path (`RESTIC_PASSWORD_FILE`). On Linux,
+files readable by other users are refused. On Windows, restrict the file and parent directory with NTFS
+ACLs to the application account; PHP cannot prove ACL privacy equivalent to `0600`, so the doctor reports
+that limitation. An explicit `QURABA_BACKUP_RESTIC_PASSWORD_FILE` override must be an absolute safe path.
 
 ## Archive password (mandatory)
 

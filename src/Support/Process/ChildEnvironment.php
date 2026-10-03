@@ -18,7 +18,7 @@ final class ChildEnvironment
     /** Variables a child may inherit. Everything else is removed. */
     private const array INHERITABLE = [
         'PATH', 'HOME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TZ',
-        // Needed on Windows development machines for process creation.
+        // Needed on Windows hosts for process creation.
         'SYSTEMROOT', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT', 'TEMP', 'TMP',
     ];
 

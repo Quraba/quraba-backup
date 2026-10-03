@@ -30,7 +30,7 @@ final readonly class PasswordFileInspector
             return ['usable' => false, 'problems' => ['QURABA_BACKUP_RESTIC_PASSWORD_FILE is not configured.'], 'warnings' => []];
         }
 
-        if (! is_file($path)) {
+        if (is_link($path) || ! is_file($path)) {
             return ['usable' => false, 'problems' => [sprintf('Password file [%s] does not exist or is not a regular file.', $path)], 'warnings' => []];
         }
 
@@ -77,6 +77,10 @@ final readonly class PasswordFileInspector
                     $warnings[] = sprintf('Password file [%s] is group-accessible (mode %04o); 0600 is recommended.', $path, $permissions & 0o777);
                 }
             }
+        }
+
+        if (PathGuard::isWindows() && $problems === []) {
+            $warnings[] = 'Windows ACL privacy cannot be proven by PHP; restrict access to the password file and its parent directory to the application account.';
         }
 
         return ['usable' => $problems === [], 'problems' => $problems, 'warnings' => $warnings];

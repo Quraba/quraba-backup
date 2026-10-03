@@ -14,13 +14,14 @@ final class PathAndIdentifierTest extends TestCase
 {
     public function test_absolute_paths_are_normalized(): void
     {
-        self::assertSame('/var/www/app/storage', PathGuard::normalizeAbsolute('/var//www/./app/storage/'));
+        $path = PHP_OS_FAMILY === 'Windows' ? 'c:\\var\\www\\.\\app\\storage\\' : '/var//www/./app/storage/';
+        self::assertSame(PHP_OS_FAMILY === 'Windows' ? 'C:/var/www/app/storage' : '/var/www/app/storage', PathGuard::normalizeAbsolute($path));
     }
 
     public function test_dot_dot_segments_are_refused(): void
     {
         $this->expectException(WorkspaceViolation::class);
-        PathGuard::normalizeAbsolute('/var/www/../etc');
+        PathGuard::normalizeAbsolute(PHP_OS_FAMILY === 'Windows' ? 'C:/var/www/../etc' : '/var/www/../etc');
     }
 
     public function test_relative_paths_are_refused_where_absolute_required(): void
@@ -32,7 +33,7 @@ final class PathAndIdentifierTest extends TestCase
     public function test_nul_bytes_are_refused(): void
     {
         $this->expectException(WorkspaceViolation::class);
-        PathGuard::normalizeAbsolute("/var/www\0/x");
+        PathGuard::normalizeAbsolute(PHP_OS_FAMILY === 'Windows' ? "C:/var/www\0/x" : "/var/www\0/x");
     }
 
     public function test_safe_relative_rejects_traversal_and_absolute_forms(): void
@@ -55,6 +56,28 @@ final class PathAndIdentifierTest extends TestCase
         self::assertTrue(PathGuard::isWithin('/a/b', '/a/b'));
         self::assertFalse(PathGuard::isWithin('/a/bc', '/a/b'), 'A shared prefix is not containment.');
         self::assertFalse(PathGuard::isWithin('/a', '/a/b'));
+    }
+
+    public function test_windows_drive_paths_are_normalized_and_contained_case_insensitively(): void
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            self::markTestSkipped('Windows path semantics are exercised on the Windows CI runner.');
+        }
+
+        self::assertSame('C:/Media/Uploads', PathGuard::normalizeAbsolute('c:\\Media/./Uploads\\'));
+        self::assertTrue(PathGuard::isWithin('c:/MEDIA/Uploads/file.jpg', 'C:\\media'));
+        self::assertFalse(PathGuard::isWithin('C:/media-other', 'C:/media'));
+        self::assertFalse(PathGuard::isWithin('D:/media', 'C:/media'));
+        self::assertSame('c:/media/uploads', PathGuard::comparable('C:\\Media\\Uploads'));
+
+        foreach (['/rooted-on-current-drive', 'C:relative', '\\\\server\\share\\path', 'C:/media/../secret', 'C:/media/file:stream', 'C:/media/trailing.'] as $unsafe) {
+            try {
+                PathGuard::normalizeAbsolute($unsafe);
+                self::fail($unsafe.' should be refused.');
+            } catch (WorkspaceViolation) {
+                self::addToAssertionCount(1);
+            }
+        }
     }
 
     public function test_full_snapshot_ids_only(): void

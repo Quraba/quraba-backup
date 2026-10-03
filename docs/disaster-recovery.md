@@ -3,6 +3,13 @@
 The server is gone. You have a new, empty host and — kept **outside** the old server — the recovery
 materials. This runbook brings the application back from Backblaze B2.
 
+The commands below show Linux paths and shell syntax. On Windows amd64, use equivalent PowerShell file
+operations and Windows paths; the package commands, exact run selection and restore gates are the same.
+Keep the recovered Restic password at the portable default
+`storage/app/private/quraba-secrets/restic-password` or set an explicit safe absolute path, and restrict
+its NTFS ACL to the application account. PHP cannot verify ACL privacy or sync the journal directory on
+Windows; use a local durable filesystem and review the [restore journal notes](restore.md#the-restore-journal).
+
 ## What you need
 
 `php artisan quraba:backup:recovery-checklist` lists these and says which are configured (it never prints

@@ -3,8 +3,8 @@
 - **One process boundary for Restic.** Only `ResticRunner` executes Restic, only through typed operations
   (version, init, cat config, snapshots, list locks, stats, backup, restore, check, forget, prune). There is no
   arbitrary-command API.
-- **No shell.** All processes are Symfony `Process` argument arrays. (On Linux, PHP executes them directly
-  without a shell.)
+- **No assembled shell commands.** All processes use Symfony `Process` argument arrays. On Linux, PHP
+  executes them directly without a shell; Symfony handles Windows process creation and argument escaping.
 - **Minimal child environment.** Everything inherited from the parent — including every `.env` value Laravel
   loaded — is stripped; only `PATH`, `HOME`, locale/timezone variables and the explicitly injected
   `RESTIC_REPOSITORY`, `RESTIC_PASSWORD_FILE`, `AWS_*`, `RESTIC_CACHE_DIR`, `TMPDIR` reach Restic.
@@ -31,14 +31,16 @@
 - **Encryption is mandatory.** Archives (which contain `.env`) are AES-256; a blank password refuses the
   backup before any data is produced, AES-256 support is checked first, and the verifier rejects any entry
   that is not AES-256 encrypted — there is no silent plaintext fallback.
-- **Plaintext lifetime.** The SQL dump and metadata exist only inside the run's 0700 operation workspace and
+- **Plaintext lifetime.** The SQL dump and metadata exist only inside the run's private operation workspace
+  (0700 on Linux; inherited NTFS ACLs on Windows) and
   are deleted as soon as the encrypted archive is written; `.env` is read in place and never copied. The
   workspace is removed in a `finally` block.
 - **Spatie isolation.** Only `SpatieArchiveEngine` (and the dumper subclass) touch Spatie. Spatie's zip task
   gets a private config instance holding the run's password, bound only while the archive is built and
   removed in `finally`; the host's own `backup` configuration is never modified. Spatie's db-dumper executor
   (a shell string with an unlimited default timeout) is not used: dumps run as argument arrays with a
-  bounded timeout, credentials only in a temporary 0600 option file.
+  bounded timeout, credentials only in a temporary private option file (0600 on Linux;
+  operator-restricted NTFS ACLs on Windows).
 - **Remote objects.** Archive and manifest paths are deterministic per run; nothing is overwritten. Existing
   objects are adopted only after size and full SHA-256 (archives) or canonical content (manifests) match;
   S3 objects are only visible once complete, so partial uploads can never be adopted. The Restic prefix is
@@ -60,8 +62,9 @@
 - **Two gates for a live restore.** `--force` and the exact configured phrase; the live services are only
   reachable through an authorization object that cannot be constructed otherwise. A dry run depends on none
   of the live services.
-- **Journal first.** The restore journal lives outside the database, is private (0600 in a 0700 directory),
-  written atomically (temporary file, fsync, rename, read-back), never followed through a symbolic link, and
+- **Journal first.** The restore journal lives outside the database, is private (0600 in a 0700 directory
+  on Linux; operator-restricted NTFS ACLs on Windows), written with temporary file, file fsync, rename and
+  read-back (plus directory fsync on Linux), never followed through a symbolic link, and
   forward-only: sequence numbers, phases, component states and frozen identities are validated on every
   write. Each destructive step is recorded before it happens; a journal that cannot be written stops the
   restore before that step.
@@ -75,7 +78,8 @@
   quote row data.
 - **Media.** Staged privately on the destination's filesystem, never in the public web directory;
   replaced by two renames with no copy or overlay fallback; links leaving a root are refused; live and
-  staged directories are identified by device and inode; parked trees are only removed on request, after a
+  staged directories are identified by device and inode where the host reports useful values, plus a real
+  rename probe and an exact tree fingerprint; parked trees are only removed on request, after a
   completed restore, and only at the exact journaled path.
 - **No automatic rollback.** After the destructive boundary a failure is `indeterminate`: nothing is
   re-imported or renamed back, the application stays in maintenance mode, and reconciliation never mutates

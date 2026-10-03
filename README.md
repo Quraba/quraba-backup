@@ -1,7 +1,7 @@
 # Quraba Backup
 
-`quraba/quraba-backup` — backup and disaster-recovery package for **single** Laravel applications on Linux
-VPS and cPanel shared hosting. Offsite storage is the customer's own **Backblaze B2** bucket (S3 API);
+`quraba/quraba-backup` — backup and disaster-recovery package for **single** Laravel applications on
+Linux or Windows. Linux VPS and cPanel shared hosting are supported. Offsite storage is the customer's own **Backblaze B2** bucket (S3 API);
 **Spatie Laravel Backup** builds the encrypted database + `.env` archive and **Restic** takes media snapshots.
 
 > **Status: backups, health, retention, restore and disaster recovery.** The package creates verified
@@ -14,7 +14,7 @@ VPS and cPanel shared hosting. Offsite storage is the customer's own **Backblaze
 ## Requirements
 
 - PHP 8.5+, Laravel 13
-- Linux (x86_64; arm64 is structurally supported) — VPS or shared hosting
+- Linux amd64/arm64 or Windows amd64; the managed Restic 0.19.1 release is pinned for each
 - `proc_open` enabled for PHP CLI, writable private storage, outbound HTTPS, one cron entry
 - MySQL or MariaDB with `mariadb-dump`/`mysqldump` (and `mariadb`/`mysql`) client tools
 - PHP `zip` with AES-256 support (checked by the doctor)
@@ -34,7 +34,9 @@ php artisan quraba:backup:doctor                 # fix every FAIL
 php artisan quraba:backup:run                    # first Recovery Point
 ```
 
-Then add one cron entry: `* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1`.
+On Linux, add one cron entry: `* * * * * cd /path/to/app && php artisan schedule:run >> /dev/null 2>&1`.
+On Windows, run `php artisan schedule:run` every minute using Task Scheduler; scheduled jobs run in
+the foreground. See [installation](docs/installation.md) and [platform notes](docs/doctor.md).
 
 ## Commands
 

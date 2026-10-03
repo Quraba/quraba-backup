@@ -80,6 +80,7 @@ use Quraba\Backup\Recovery\RecoveryChecklist;
 use Quraba\Backup\Restic\Installer\Bzip2Decompressor;
 use Quraba\Backup\Restic\Installer\HttpReleaseDownloader;
 use Quraba\Backup\Restic\Installer\ResticInstaller;
+use Quraba\Backup\Restic\Installer\VerifiedZipExtractor;
 use Quraba\Backup\Restic\PasswordFileInspector;
 use Quraba\Backup\Restic\PlatformDetector;
 use Quraba\Backup\Restic\RepositoryContextResolver;
@@ -270,6 +271,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             $app->make(PlatformDetector::class),
             $app->make(ReleaseDownloader::class),
             $app->make(Bzip2Decompressor::class),
+            $app->make(VerifiedZipExtractor::class),
             $app->make(LockManager::class),
             self::logger($app),
         ));

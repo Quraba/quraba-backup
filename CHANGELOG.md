@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — v1.1.0
+## v1.1.0 — 2026-10-03
 
 - Support PHP 8.4 alongside PHP 8.5 on the established Linux and Windows platforms. The doctor now
   accepts PHP 8.4+, and CI covers both runtimes with the real package suite; the manual B2 gate runs on

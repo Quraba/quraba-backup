@@ -37,6 +37,7 @@ final readonly class ArchiveMetadata
     public function build(ArchiveRequest $request, DatabaseDump $dump, string $databaseEntry, bool $includesEnv): array
     {
         $appKey = $this->config->get('app.key');
+        $mariaDbToolProven = $dump->mariaDbToolProven();
 
         return [
             'schema_version' => self::SCHEMA_VERSION,
@@ -71,12 +72,12 @@ final readonly class ArchiveMetadata
                     'triggers' => $dump->objectPrivilegesProven['triggers'],
                     'routines' => $dump->routinesIncluded && $dump->objectPrivilegesProven['routines'],
                     'events' => $dump->eventsIncluded,
-                    'sequences' => $dump->flavor->value === 'mariadb' ? ($dump->tool === 'mariadb-dump' && $dump->objectPrivilegesProven['tables'] ? 'dumped_as_tables' : 'unknown') : 'not_applicable',
+                    'sequences' => $dump->flavor->value === 'mariadb' ? ($mariaDbToolProven && $dump->objectPrivilegesProven['tables'] ? 'dumped_as_tables' : 'unknown') : 'not_applicable',
                 ],
                 'exact_object_completeness' => $dump->eventsIncluded && $dump->routinesIncluded
                     && $dump->objectPrivilegesProven['tables'] && $dump->objectPrivilegesProven['views']
                     && $dump->objectPrivilegesProven['triggers'] && $dump->objectPrivilegesProven['routines']
-                    && ($dump->flavor->value !== 'mariadb' || $dump->tool === 'mariadb-dump'),
+                    && ($dump->flavor->value !== 'mariadb' || $mariaDbToolProven),
             ],
             'app_key_fingerprint' => is_string($appKey) && $appKey !== '' ? 'sha256:'.hash('sha256', $appKey) : null,
             'contents' => array_values(array_filter([

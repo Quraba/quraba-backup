@@ -202,6 +202,23 @@ final class ResticCommandsTest extends TestCase
         self::assertFalse($report['ok']);
     }
 
+    public function test_doctor_identifies_a_stale_windows_managed_binary_path(): void
+    {
+        $this->useFakeRestic(['repository' => 'ready']);
+
+        [, $report] = $this->callJson('quraba:backup:doctor');
+        self::assertSame(PHP_OS_FAMILY === 'Windows' ? 'fail' : 'pass', $this->statuses($report)['safety.binary_location']);
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $finding = array_values(array_filter((array) $report['checks'], static fn (array $check): bool => $check['id'] === 'safety.binary_location'))[0];
+            self::assertStringContainsString('published pre-v1.1.0 config', $finding['message']);
+        }
+
+        $this->config()->set('restic.managed_binary', $this->sandbox.'/private/bin/restic.exe');
+        [, $corrected] = $this->callJson('quraba:backup:doctor');
+        self::assertSame('pass', $this->statuses($corrected)['safety.binary_location']);
+    }
+
     public function test_doctor_detects_reused_secrets_and_missing_identity(): void
     {
         $this->useFakeRestic(['repository' => 'ready']);

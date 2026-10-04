@@ -18,6 +18,8 @@ final readonly class ResticConfig
     /** @var list<string> */
     public const array TIMEOUT_CLASSES = ['version', 'query', 'init', 'backup', 'restore', 'check', 'forget', 'prune'];
 
+    public const string WINDOWS_LEGACY_MANAGED_BINARY_MESSAGE = 'The configured managed Restic binary on Windows does not end in restic.exe. This may be a published pre-v1.1.0 config; update config/restic.php or QURABA_BACKUP_RESTIC_MANAGED_BINARY.';
+
     /**
      * @param  array<string, int>  $timeouts
      * @param  array<string, array<string, string>>  $checksums
@@ -73,6 +75,11 @@ final readonly class ResticConfig
             maxArchiveBytes: self::positiveInt($config->get('restic.installer.max_archive_bytes'), 'restic.installer.max_archive_bytes'),
             maxBinaryBytes: self::positiveInt($config->get('restic.installer.max_binary_bytes'), 'restic.installer.max_binary_bytes'),
         );
+    }
+
+    public static function hasExtensionlessResticName(string $path): bool
+    {
+        return strcasecmp(basename(str_replace('\\', '/', $path)), 'restic') === 0;
     }
 
     public function timeout(string $class): int

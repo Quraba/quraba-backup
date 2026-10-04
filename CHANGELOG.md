@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — v1.1.1
+
+- Recognize MariaDB dump tools by their probed `--version` provenance, including Windows
+  `mysqldump.exe`, when assessing sequence coverage and exact database object completeness.
+  A MySQL dump tool still cannot prove MariaDB sequence coverage by filename alone.
+- Diagnose published pre-v1.1.0 Windows Restic paths ending in extensionless `restic` before
+  installation and in Doctor, with guidance to update the managed binary path to `restic.exe`.
+
 ## v1.1.0 — 2026-10-03
 
 - Support PHP 8.4 alongside PHP 8.5 on the established Linux and Windows platforms. The doctor now

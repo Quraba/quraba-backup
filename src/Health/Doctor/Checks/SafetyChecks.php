@@ -7,6 +7,7 @@ namespace Quraba\Backup\Health\Doctor\Checks;
 use Illuminate\Contracts\Config\Repository;
 use Quraba\Backup\Health\CheckResult;
 use Quraba\Backup\Health\Doctor\DoctorCheck;
+use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Support\PathGuard;
 
 /**
@@ -88,6 +89,10 @@ final readonly class SafetyChecks implements DoctorCheck
 
         if ($binary !== null && PathGuard::isWithin($binary, PathGuard::real($this->publicPath) ?? $this->publicPath)) {
             return CheckResult::fail('safety.binary_location', 'Managed binary location', 'The managed Restic binary path is inside the public web root.');
+        }
+
+        if ($binary !== null && PathGuard::isWindows() && ResticConfig::hasExtensionlessResticName($binary)) {
+            return CheckResult::fail('safety.binary_location', 'Managed binary location', ResticConfig::WINDOWS_LEGACY_MANAGED_BINARY_MESSAGE);
         }
 
         return CheckResult::pass('safety.binary_location', 'Managed binary location', 'Outside the public web root.');

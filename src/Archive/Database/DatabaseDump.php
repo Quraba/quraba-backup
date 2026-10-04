@@ -25,4 +25,10 @@ final readonly class DatabaseDump
         /** @var array{tables: bool, views: bool, triggers: bool, routines: bool} */
         public array $objectPrivilegesProven = ['tables' => false, 'views' => false, 'triggers' => false, 'routines' => false],
     ) {}
+
+    /** The tool version is captured from the executable's successful --version probe. */
+    public function mariaDbToolProven(): bool
+    {
+        return ServerFlavor::fromVersionString($this->toolVersion) === ServerFlavor::MariaDb;
+    }
 }

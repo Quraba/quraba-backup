@@ -13,6 +13,7 @@ use Quraba\Backup\Archive\Database\MySqlDatabaseDumper;
 use Quraba\Backup\Contracts\ArchiveEngine;
 use Quraba\Backup\Contracts\DatabaseDumper;
 use Quraba\Backup\Database\DumpSchemaFingerprinter;
+use Quraba\Backup\Database\ServerFlavor;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Exceptions\RestoreFailed;
 use Quraba\Backup\Identity\IdentityResolver;
@@ -116,7 +117,7 @@ final class RealDatabaseArchiveTest extends TestCase
             self::assertMatchesRegularExpression('/^sha256:[0-9a-f]{64}$/', (string) $verified->metadata['database']['schema_fingerprint']);
             self::assertTrue($verified->metadata['database']['events_included']);
             self::assertSame(['tables' => true, 'views' => true, 'triggers' => true, 'routines' => true], $verified->metadata['database']['object_privileges_proven']);
-            self::assertSame($verified->metadata['database']['flavor'] !== 'mariadb' || $verified->metadata['database']['dump_tool'] === 'mariadb-dump', $verified->metadata['database']['exact_object_completeness']);
+            self::assertSame($verified->metadata['database']['flavor'] !== 'mariadb' || ServerFlavor::fromVersionString((string) $verified->metadata['database']['dump_tool_version']) === ServerFlavor::MariaDb, $verified->metadata['database']['exact_object_completeness']);
 
             $zip = new ZipArchive;
             $zip->open($created->path);

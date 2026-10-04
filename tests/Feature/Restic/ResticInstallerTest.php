@@ -12,6 +12,7 @@ use Quraba\Backup\Exceptions\StorageUnavailable;
 use Quraba\Backup\Restic\Installer\InstallOutcome;
 use Quraba\Backup\Restic\Installer\ResticInstaller;
 use Quraba\Backup\Restic\PlatformDetector;
+use Quraba\Backup\Restic\ResticConfig;
 use Quraba\Backup\Restic\ResticRelease;
 use Quraba\Backup\Tests\Support\FakeReleaseDownloader;
 use Quraba\Backup\Tests\Support\UsesFakeRestic;
@@ -101,6 +102,30 @@ final class ResticInstallerTest extends TestCase
         self::assertSame(InstallOutcome::AlreadyInstalled, $again->outcome);
         self::assertCount(0, $this->downloader->requested, 'An installed, verified binary needs no download.');
         self::assertSame(2, $downloads);
+    }
+
+    public function test_legacy_windows_managed_name_is_refused_before_download_or_staging(): void
+    {
+        $installer = $this->installer(os: 'Windows');
+
+        foreach (['plan', 'install'] as $method) {
+            try {
+                $installer->{$method}();
+                self::fail($method.' must reject a published pre-v1.1.0 Windows binary path.');
+            } catch (ResticInstallationFailed $exception) {
+                self::assertSame(ResticConfig::WINDOWS_LEGACY_MANAGED_BINARY_MESSAGE, $exception->getMessage());
+            }
+        }
+
+        self::assertSame([], $this->downloader->requested);
+        self::assertFileDoesNotExist($this->target());
+    }
+
+    public function test_windows_managed_exe_name_is_accepted_by_the_install_plan(): void
+    {
+        $this->config()->set('restic.managed_binary', $this->target().'.exe');
+
+        self::assertSame($this->target().'.exe', $this->installer(os: 'Windows')->plan()['target']);
     }
 
     public function test_archive_checksum_mismatch_is_refused_before_extraction(): void

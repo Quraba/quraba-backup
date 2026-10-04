@@ -48,6 +48,14 @@ final class ResticConfigTest extends TestCase
         self::assertSame(storage_path('app/private/quraba-backup/bin/'.(PHP_OS_FAMILY === 'Windows' ? 'restic.exe' : 'restic')), $published['managed_binary']);
     }
 
+    public function test_legacy_windows_managed_binary_name_is_identified_without_rejecting_executable_overrides(): void
+    {
+        self::assertTrue(ResticConfig::hasExtensionlessResticName('C:\\app\\storage\\bin\\restic'));
+        self::assertTrue(ResticConfig::hasExtensionlessResticName('C:/app/storage/bin/RESTIC'));
+        self::assertFalse(ResticConfig::hasExtensionlessResticName('C:/app/storage/bin/restic.exe'));
+        self::assertFalse(ResticConfig::hasExtensionlessResticName('C:/app/storage/bin/custom-restic.exe'));
+    }
+
     public function test_published_configuration_cannot_replace_the_windows_digest(): void
     {
         $config = ResticConfig::fromConfig($this->resticConfig([

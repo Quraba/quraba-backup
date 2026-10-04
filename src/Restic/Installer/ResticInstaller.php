@@ -67,6 +67,7 @@ final readonly class ResticInstaller
     public function plan(): array
     {
         $platform = $this->platforms->detect();
+        $this->rejectLegacyWindowsManagedBinary($platform);
         $asset = ResticReleaseAsset::forPlatform($platform, $this->config->archiveTemplate);
 
         return [
@@ -82,6 +83,7 @@ final readonly class ResticInstaller
     public function install(bool $force = false): InstallResult
     {
         $platform = $this->platforms->detect();
+        $this->rejectLegacyWindowsManagedBinary($platform);
         $expected = $this->config->pinnedChecksum($platform);
 
         if ($expected === null) {
@@ -132,6 +134,13 @@ final readonly class ResticInstaller
             return $result;
         } finally {
             $lock->release();
+        }
+    }
+
+    private function rejectLegacyWindowsManagedBinary(ResticPlatform $platform): void
+    {
+        if ($platform->os === 'windows' && ResticConfig::hasExtensionlessResticName($this->config->managedBinary)) {
+            throw new ResticInstallationFailed(ResticConfig::WINDOWS_LEGACY_MANAGED_BINARY_MESSAGE);
         }
     }
 

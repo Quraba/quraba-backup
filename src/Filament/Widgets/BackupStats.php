@@ -12,11 +12,16 @@ use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupRun;
+use Quraba\Backup\Operations\PanelTableAvailability;
 
 final class BackupStats extends StatsOverviewWidget
 {
     protected function getStats(): array
     {
+        $tables = app(PanelTableAvailability::class);
+        if (! $tables->has('runs') || ! $tables->has('artifacts')) {
+            return [];
+        }
         $recovery = BackupRun::query()->where('profile', BackupProfile::Recovery->value)->where('status', BackupStatus::Completed->value)
             ->whereHas('artifacts', fn ($q) => $q->where('kind', ArtifactKind::ApplicationArchive->value)->where('status', ArtifactStatus::Verified->value))
             ->whereHas('artifacts', fn ($q) => $q->where('kind', ArtifactKind::ResticSnapshot->value)->where('status', ArtifactStatus::Verified->value))

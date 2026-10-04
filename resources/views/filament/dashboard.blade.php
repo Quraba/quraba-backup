@@ -1,5 +1,10 @@
 <x-filament-panels::page>
     <div class="space-y-6">
+        @if (! $operationsAvailable || ! $catalogAvailable || ! $maintenanceAvailable)
+            <x-filament::section heading="Panel history needs package migrations">
+                <p>Some backup panel tables are unavailable in this database. After verifying a restored application, run the host application's normal <code>php artisan migrate</code> process to restore package operation history.</p>
+            </x-filament::section>
+        @endif
         <x-filament::section heading="Recovery health" description="Can this application be recovered from its recorded backups?">
             <div class="flex flex-wrap items-center gap-3">
                 <x-filament::badge :color="match ($health['state'] ?? 'unknown') { 'healthy' => 'success', 'degraded' => 'warning', 'failed' => 'danger', default => 'gray' }">
@@ -26,7 +31,7 @@
                 <p>Environment: {{ $environment }}</p>
                 <p>Backups: {{ $backupEnabled ? 'Enabled' : 'Disabled' }}</p>
                 <p>Recovery secrets: {{ $secretsAcknowledged ? 'Acknowledged' : 'Not acknowledged' }}</p>
-                <p>Worker: {{ $workerRecent ? 'Recently observed' : 'Not recently observed' }} · Last seen {{ $workerObserved ?? 'never' }}</p>
+                <p>Panel operation worker: {{ ! $pendingEnabled ? 'Disabled' : ($workerRecent ? 'Recently observed' : 'Not recently observed') }}@if ($pendingEnabled) · Last seen {{ $workerObserved ?? 'never' }}@endif</p>
             </x-filament::section>
         </div>
 
@@ -38,7 +43,7 @@
             @endforelse
         </x-filament::section>
 
-        <x-filament::section heading="Configured schedules" description="Planned times require a working cron entry. The worker observation above shows whether this host has recently run it.">
+        <x-filament::section heading="Configured schedules" description="Planned times require a working Laravel scheduler. The panel operation worker observation does not measure general cron health.">
             @if ($scheduleError)<p>{{ $scheduleError }}</p>@endif
             @forelse ($schedules as $schedule)
                 <p>{{ ucfirst(str_replace('_', ' ', $schedule->task)) }}: {{ $schedule->describe() }}</p>

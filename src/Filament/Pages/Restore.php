@@ -21,8 +21,12 @@ use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Config\Repository;
+use Illuminate\Database\Eloquent\Builder;
 use Quraba\Backup\Contracts\DatabaseReplacement;
 use Quraba\Backup\Enums\ArtifactKind;
+use Quraba\Backup\Enums\ArtifactStatus;
+use Quraba\Backup\Enums\BackupProfile;
+use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Enums\RestoreMode;
 use Quraba\Backup\Enums\RestoreProfile;
@@ -32,6 +36,7 @@ use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\PendingOperation;
 use Quraba\Backup\Models\RestoreRun;
 use Quraba\Backup\Operations\LiveApprovalStore;
+use Quraba\Backup\Operations\PanelTableAvailability;
 use Quraba\Backup\Operations\PendingOperationRequest;
 use Quraba\Backup\Restore\Live\LiveRestoreAuthorization;
 use Quraba\Backup\Restore\Live\RestoreReconciler;
@@ -54,11 +59,11 @@ final class Restore extends Page implements Tables\Contracts\HasTable
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('dry_restore')->label('Prepare dry restore')->visible(fn (): bool => BackupPanelAccess::allows('dry-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled'))
+            Action::make('dry_restore')->label('Prepare dry restore')->visible(fn (): bool => BackupPanelAccess::allows('dry-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->schema($this->sourceFields())
                 ->action(fn (array $data) => $this->submit(PendingOperationType::DryRestore, $data)),
             Action::make('live_restore')->label('Request live restore')->color('danger')
-                ->visible(fn (): bool => BackupPanelAccess::allows('live-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && (bool) config('quraba-backup.filament.live_restore_enabled'))
+                ->visible(fn (): bool => BackupPanelAccess::allows('live-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && (bool) config('quraba-backup.filament.live_restore_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->schema([
                     Wizard::make([
                         Step::make('Exact source')->schema($this->sourceFields()),
@@ -90,7 +95,16 @@ final class Restore extends Page implements Tables\Contracts\HasTable
     private function sourceFields(): array
     {
         return [
-            TextInput::make('source_run_uuid')->label('Exact Recovery Point UUID')->required()->uuid()->live(onBlur: true)->helperText('Choose one exact backup run. No latest or partial identifier is accepted.'),
+            Select::make('known_source_run_uuid')->label('Known recovery point')->searchable()->preload()->required(fn (Get $get): bool => blank($get('manual_source_run_uuid')))
+                ->options(fn (): array => $this->catalogAvailable() ? $this->eligibleSourceQuery()->latest('requested_at')->limit(30)->get()->mapWithKeys(fn (BackupRun $run): array => [$run->uuid => $this->sourceLabel($run)])->all() : [])
+                ->getSearchResultsUsing(fn (string $search): array => $this->catalogAvailable() ? $this->eligibleSourceQuery()->where('uuid', 'like', '%'.$search.'%')->latest('requested_at')->limit(30)->get()->mapWithKeys(fn (BackupRun $run): array => [$run->uuid => $this->sourceLabel($run)])->all() : [])
+                ->getOptionLabelUsing(function (string $value): ?string {
+                    $run = $this->catalogAvailable() ? $this->eligibleSourceQuery()->where('uuid', $value)->first() : null;
+
+                    return $run instanceof BackupRun ? $this->sourceLabel($run) : null;
+                })
+                ->live()->helperText('Browse recent verified full Recovery Points or search by UUID. No source is selected automatically.'),
+            TextInput::make('manual_source_run_uuid')->label('Manual exact UUID (advanced)')->uuid()->required(fn (Get $get): bool => blank($get('known_source_run_uuid')))->live(onBlur: true)->helperText('Use only when the local catalog is missing a recoverable immutable remote manifest. Leave the selector empty.'),
             Select::make('restore_profile')->label('Restore scope')->options(['database' => 'Database', 'media' => 'Media', 'full' => 'Full'])->required()->default('full')->live(),
         ];
     }
@@ -120,7 +134,7 @@ final class Restore extends Page implements Tables\Contracts\HasTable
                 TextColumn::make('uuid')->label('Restore UUID')->copyable()->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultPaginationPageOption(20)
-            ->poll(fn (): ?string => PendingOperation::query()->whereIn('status', ['pending', 'claimed', 'running'])->exists() ? '20s' : null);
+            ->poll(fn (): ?string => app(PanelTableAvailability::class)->has('operations') && PendingOperation::query()->whereIn('status', ['pending', 'claimed', 'running'])->exists() ? '20s' : null);
     }
 
     protected function getViewData(): array
@@ -132,12 +146,23 @@ final class Restore extends Page implements Tables\Contracts\HasTable
             $journals = ['journals' => [], 'unreadable' => ['Journal directory unavailable'], 'unresolved' => 0];
         }
 
+        $tables = app(PanelTableAvailability::class);
+        $operationsAvailable = $tables->has('operations');
+        try {
+            $requests = $operationsAvailable ? PendingOperation::query()->whereIn('type', [PendingOperationType::DryRestore->value, PendingOperationType::LiveRestore->value])->latest('id')->limit(10)->get() : collect();
+        } catch (Throwable) {
+            $requests = collect();
+            $operationsAvailable = false;
+        }
+
         return [
             'journals' => $journals,
-            'requests' => PendingOperation::query()->whereIn('type', [PendingOperationType::DryRestore->value, PendingOperationType::LiveRestore->value])->latest('id')->limit(10)->get(),
+            'requests' => $requests,
             'approvalHistory' => app(LiveApprovalStore::class)->history(),
             'liveEnabled' => (bool) config('quraba-backup.filament.live_restore_enabled'),
             'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
+            'operationsAvailable' => $operationsAvailable,
+            'restoresAvailable' => $tables->has('restores'),
         ];
     }
 
@@ -151,7 +176,15 @@ final class Restore extends Page implements Tables\Contracts\HasTable
                 throw new \DomainException('Both live restore acknowledgements are required.');
             }
             $profileValue = $data['restore_profile'] ?? null;
-            $source = $data['source_run_uuid'] ?? null;
+            $known = $data['known_source_run_uuid'] ?? null;
+            $manual = $data['manual_source_run_uuid'] ?? null;
+            if (filled($known) && filled($manual)) {
+                throw new \InvalidArgumentException('Choose either a known recovery point or a manual exact UUID.');
+            }
+            $source = filled($known) ? $known : $manual;
+            if (filled($known) && (! is_string($known) || ! $this->eligibleSourceQuery()->where('uuid', $known)->exists())) {
+                throw new \InvalidArgumentException('The selected recovery point is no longer eligible.');
+            }
             $actor = Filament::auth()->user();
             abort_unless($actor instanceof Authenticatable, 403);
             if (! is_string($profileValue) || ! is_string($source)) {
@@ -169,11 +202,11 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
     private function impactSummary(Get $get): string
     {
-        $uuid = $get('source_run_uuid');
+        $uuid = $this->selectedSource($get);
         if (! is_string($uuid) || $uuid === '') {
             return 'Enter an exact source UUID to review its recorded components.';
         }
-        $run = BackupRun::query()->with('artifacts')->where('uuid', $uuid)->first();
+        $run = app(PanelTableAvailability::class)->has('runs') && app(PanelTableAvailability::class)->has('artifacts') ? BackupRun::query()->with('artifacts')->where('uuid', $uuid)->first() : null;
         if ($run === null) {
             return 'This source is absent from the local catalog. The worker will resolve the immutable remote manifest before any change.';
         }
@@ -209,10 +242,13 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
     private function dryGuidance(Get $get): string
     {
-        $uuid = $get('source_run_uuid');
+        $uuid = $this->selectedSource($get);
         $profile = $get('restore_profile');
         if (! is_string($uuid) || ! is_string($profile)) {
             return 'A completed dry restore of the exact source and scope is required.';
+        }
+        if (! app(PanelTableAvailability::class)->has('operations')) {
+            return 'Panel operation history is unavailable until package migrations are run after restore verification.';
         }
         $dry = PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)
             ->where('source_run_uuid', $uuid)->where('restore_profile', $profile)
@@ -230,10 +266,13 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
     private function warningsSummary(Get $get): string
     {
-        $uuid = $get('source_run_uuid');
+        $uuid = $this->selectedSource($get);
         $profile = $get('restore_profile');
         if (! is_string($uuid) || ! is_string($profile)) {
             return 'Choose an exact source and scope to review the recorded dry restore findings.';
+        }
+        if (! app(PanelTableAvailability::class)->has('operations')) {
+            return 'Panel operation history is unavailable until package migrations are run after restore verification.';
         }
         $dry = PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)
             ->where('source_run_uuid', $uuid)->where('restore_profile', $profile)->latest('id')->first();
@@ -246,5 +285,34 @@ final class Restore extends Page implements Tables\Contracts\HasTable
         return sprintf('Warnings: %s. Blockers: %s. Any blocker prevents submission. New findings discovered by the live worker also stop the restore.',
             $warnings === [] ? 'none recorded' : implode('; ', array_filter($warnings, 'is_string')),
             $blockers === [] ? 'none recorded' : implode('; ', array_filter($blockers, 'is_string')));
+    }
+
+    private function selectedSource(Get $get): ?string
+    {
+        $known = $get('known_source_run_uuid');
+        $manual = $get('manual_source_run_uuid');
+
+        return is_string($known) && $known !== '' ? $known : (is_string($manual) && $manual !== '' ? $manual : null);
+    }
+
+    private function catalogAvailable(): bool
+    {
+        $tables = app(PanelTableAvailability::class);
+
+        return $tables->has('runs') && $tables->has('artifacts');
+    }
+
+    /** @return Builder<BackupRun> */
+    private function eligibleSourceQuery(): Builder
+    {
+        return BackupRun::query()->where('profile', BackupProfile::Recovery->value)
+            ->where('status', BackupStatus::Completed->value)
+            ->whereHas('artifacts', fn (Builder $query): Builder => $query->where('kind', ArtifactKind::ApplicationArchive->value)->where('status', ArtifactStatus::Verified->value))
+            ->whereHas('artifacts', fn (Builder $query): Builder => $query->where('kind', ArtifactKind::ResticSnapshot->value)->where('status', ArtifactStatus::Verified->value));
+    }
+
+    private function sourceLabel(BackupRun $run): string
+    {
+        return sprintf('%s UTC · Recovery · %s · %s · %s', $run->requested_at?->format('M j, Y H:i') ?? 'Unknown time', $run->status->value, $run->consistency->value, $run->uuid);
     }
 }

@@ -12,6 +12,7 @@ use Quraba\Backup\Filament\Widgets\BackupStats;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\PendingOperation;
+use Quraba\Backup\Operations\PanelTableAvailability;
 use Quraba\Backup\Operations\WorkerHeartbeat;
 use Quraba\Backup\Restore\Live\RestoreReconciler;
 use Quraba\Backup\Scheduling\BackupScheduler;
@@ -26,7 +27,9 @@ final class BackupDashboard extends Page
 
     protected function getHeaderWidgets(): array
     {
-        return [BackupStats::class];
+        $tables = app(PanelTableAvailability::class);
+
+        return $tables->has('runs') && $tables->has('artifacts') ? [BackupStats::class] : [];
     }
 
     public static function canAccess(): bool
@@ -39,8 +42,17 @@ final class BackupDashboard extends Page
     {
         BackupPanelAccess::authorize('view-dashboard');
 
-        $healthRun = PendingOperation::query()->where('type', PendingOperationType::HealthRefresh->value)
-            ->whereIn('status', [PendingOperationStatus::Completed->value, PendingOperationStatus::Failed->value])->latest('id')->first();
+        $tables = app(PanelTableAvailability::class);
+        $operationsAvailable = $tables->has('operations');
+        $runsAvailable = $tables->has('runs');
+        $maintenanceAvailable = $tables->has('maintenance');
+        try {
+            $healthRun = $operationsAvailable ? PendingOperation::query()->where('type', PendingOperationType::HealthRefresh->value)
+                ->whereIn('status', [PendingOperationStatus::Completed->value, PendingOperationStatus::Failed->value])->latest('id')->first() : null;
+        } catch (Throwable) {
+            $healthRun = null;
+            $operationsAvailable = false;
+        }
         $health = $healthRun === null || ! is_array($healthRun->result)
             ? ['state' => 'unknown', 'checks' => [], 'checked_at' => null]
             : $healthRun->result;
@@ -62,24 +74,45 @@ final class BackupDashboard extends Page
             $scheduleError = app(SecretRedactor::class)->redact($exception->getMessage());
         }
 
-        $warnings = BackupRun::query()->whereIn('status', ['failed', 'partial', 'indeterminate'])->latest('id')->limit(5)->get();
+        try {
+            $warnings = $runsAvailable ? BackupRun::query()->whereIn('status', ['failed', 'partial', 'indeterminate'])->latest('id')->limit(5)->get() : collect();
+            $latestRun = $runsAvailable ? BackupRun::query()->latest('id')->first() : null;
+        } catch (Throwable) {
+            $warnings = collect();
+            $latestRun = null;
+            $runsAvailable = false;
+        }
         $workerRecent = app(WorkerHeartbeat::class)->recentlyObserved();
+        $pendingEnabled = (bool) config('quraba-backup.filament.pending_enabled');
         if ($journals['unresolved'] > 0 || $journals['unreadable'] !== []) {
             $health['state'] = 'failed';
-        } elseif (($health['state'] ?? null) === 'healthy' && ($warnings->isNotEmpty() || ! $workerRecent || $scheduleError !== null)) {
+        } elseif ($latestRun?->status?->value === 'indeterminate') {
+            $health['state'] = 'failed';
+        } elseif (($health['state'] ?? null) === 'healthy' && (in_array($latestRun?->status?->value, ['failed', 'partial'], true) || ($pendingEnabled && ! $workerRecent) || $scheduleError !== null)) {
             $health['state'] = 'degraded';
+        }
+
+        try {
+            $resticCheck = $maintenanceAvailable ? BackupMaintenanceRun::query()->where('operation', 'restic_check')->where('status', 'completed')->latest('finished_at')->first() : null;
+        } catch (Throwable) {
+            $resticCheck = null;
+            $maintenanceAvailable = false;
         }
 
         return [
             'health' => $health,
             'repository' => collect(is_array($health['checks'] ?? null) ? $health['checks'] : [])->firstWhere('id', 'health.repository'),
             'warnings' => $warnings,
-            'resticCheck' => BackupMaintenanceRun::query()->where('operation', 'restic_check')->where('status', 'completed')->latest('finished_at')->first(),
+            'resticCheck' => $resticCheck,
             'schedules' => $schedules,
             'scheduleError' => $scheduleError,
             'journals' => $journals,
             'workerObserved' => app(WorkerHeartbeat::class)->observedAt(),
             'workerRecent' => $workerRecent,
+            'pendingEnabled' => $pendingEnabled,
+            'operationsAvailable' => $operationsAvailable,
+            'catalogAvailable' => $runsAvailable,
+            'maintenanceAvailable' => $maintenanceAvailable,
             'environment' => config('quraba-backup.environment') ?: config('app.env'),
             'backupEnabled' => (bool) config('quraba-backup.enabled'),
             'secretsAcknowledged' => (bool) config('quraba-backup.recovery_secrets_acknowledged'),

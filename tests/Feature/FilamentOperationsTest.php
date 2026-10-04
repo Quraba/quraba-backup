@@ -15,6 +15,7 @@ use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Exceptions\ConfigurationException;
+use Quraba\Backup\Exceptions\RestoreFailed;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\BackupSetting;
@@ -26,7 +27,9 @@ use Quraba\Backup\Operations\OperationLease;
 use Quraba\Backup\Operations\PendingOperationProcessor;
 use Quraba\Backup\Operations\PendingOperationRequest;
 use Quraba\Backup\Operations\WorkerHeartbeat;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
 use Quraba\Backup\Restore\Live\LiveRestoreAuthorization;
+use Quraba\Backup\Restore\Live\LiveRestoreService;
 use Quraba\Backup\Scheduling\BackupScheduler;
 use Quraba\Backup\Scheduling\ScheduleSettings;
 use Quraba\Backup\Support\PackagePaths;
@@ -133,6 +136,39 @@ final class FilamentOperationsTest extends TestCase
         file_put_contents($path, json_encode($data, JSON_THROW_ON_ERROR));
         $this->expectException(\RuntimeException::class);
         ConsumedLiveApproval::consume($operation, $paths);
+    }
+
+    public function test_queued_authorization_refuses_different_source_and_scopes_at_service_boundary(): void
+    {
+        $nonce = bin2hex(random_bytes(32));
+        $operation = PendingOperation::request(PendingOperationType::LiveRestore, GenericUser::class, '7', self::APP_ID, RestoreProfile::Full, 'service-binding', hash('sha256', $nonce));
+        $this->app->make(LiveApprovalStore::class)->issue($operation, $nonce);
+        $proof = ConsumedLiveApproval::consume($operation, $this->app->make(PackagePaths::class));
+        $authorization = LiveRestoreAuthorization::fromConsumedApproval($proof);
+
+        foreach ([['40af267c-9779-4245-b292-0807063af224', RestoreProfile::Full], [self::APP_ID, RestoreProfile::Database], [self::APP_ID, RestoreProfile::Media]] as [$source, $profile]) {
+            try {
+                $this->app->make(LiveRestoreService::class)->run($source, $profile, $authorization);
+                self::fail('A mismatched queued restore must be refused.');
+            } catch (RestoreFailed $exception) {
+                self::assertSame('restore.confirmation_required', $exception->failureCode());
+            }
+        }
+        self::assertSame([], $this->app->make(RestoreJournalStore::class)->all()['journals']);
+        self::assertSame(0, RestoreRun::query()->count());
+    }
+
+    public function test_consumed_request_without_readable_terminal_journal_remains_indeterminate(): void
+    {
+        $nonce = bin2hex(random_bytes(32));
+        $operation = PendingOperation::request(PendingOperationType::LiveRestore, GenericUser::class, '7', self::APP_ID, RestoreProfile::Full, 'uncertain-journal', hash('sha256', $nonce));
+        $this->app->make(LiveApprovalStore::class)->issue($operation, $nonce);
+        ConsumedLiveApproval::consume($operation, $this->app->make(PackagePaths::class));
+
+        $outcome = (new \ReflectionMethod(PendingOperationProcessor::class, 'journalOutcome'))->invoke($this->app->make(PendingOperationProcessor::class), $operation);
+
+        self::assertSame(PendingOperationStatus::Indeterminate, $outcome['state']);
+        self::assertSame('indeterminate', $outcome['result']['status']);
     }
 
     public function test_live_request_requires_exact_phrase_and_never_persists_it(): void

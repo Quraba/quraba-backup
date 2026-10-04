@@ -14,6 +14,7 @@ use Quraba\Backup\Health\Doctor\DoctorService;
 use Quraba\Backup\Health\ResticHealthService;
 use Quraba\Backup\Maintenance\ResticMaintenanceService;
 use Quraba\Backup\Models\PendingOperation;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
 use Quraba\Backup\Restore\Live\LiveRestoreAuthorization;
 use Quraba\Backup\Restore\Live\LiveRestoreService;
 use Quraba\Backup\Restore\RestoreDryRunService;
@@ -29,8 +30,10 @@ final readonly class PendingOperationProcessor
         private PendingOperationActorResolver $actors,
         private OperationLease $leases,
         private WorkerHeartbeat $heartbeat,
+        private PanelTableAvailability $tables,
         private PackagePaths $paths,
         private LiveApprovalStore $approvals,
+        private RestoreJournalStore $journals,
         private SecretRedactor $redactor,
         private RestoreDryRunService $dryRestores,
         private LiveRestoreService $liveRestores,
@@ -44,8 +47,15 @@ final readonly class PendingOperationProcessor
     public function runOne(): ?PendingOperation
     {
         $this->heartbeat->beat();
-        $this->markInterrupted();
-        $candidate = PendingOperation::query()->where('status', PendingOperationStatus::Pending->value)->orderBy('id')->first();
+        if (! $this->tables->has('operations')) {
+            throw new \RuntimeException('Panel operation history is unavailable. Run the package migrations with php artisan migrate after verifying the restored application.');
+        }
+        try {
+            $this->markInterrupted();
+            $candidate = PendingOperation::query()->where('status', PendingOperationStatus::Pending->value)->orderBy('id')->first();
+        } catch (Throwable) {
+            throw new \RuntimeException('Panel operation history is temporarily unavailable. Check the catalog database and package migrations.');
+        }
         if ($candidate === null) {
             return null;
         }
@@ -74,15 +84,35 @@ final readonly class PendingOperationProcessor
             $result = $this->dispatch($candidate);
             $state = ($result['status'] ?? null) === 'indeterminate' ? PendingOperationStatus::Indeterminate
                 : (($result['ok'] ?? true) === true ? PendingOperationStatus::Completed : PendingOperationStatus::Failed);
-            $candidate->finish($state, $result);
+            if ($candidate->type === PendingOperationType::LiveRestore) {
+                $this->finishLiveRow($candidate, $state, $result);
+            } else {
+                $candidate->finish($state, $result);
+            }
         } catch (Throwable $exception) {
-            $candidate->finish(PendingOperationStatus::Failed, [], 'operation.failed', $this->redactor->redact($exception->getMessage()));
+            if ($candidate->type === PendingOperationType::LiveRestore) {
+                $outcome = $this->journalOutcome($candidate);
+                if ($outcome !== null) {
+                    $this->finishLiveRow($candidate, $outcome['state'], $outcome['result']);
+                } else {
+                    $this->finishLiveRow($candidate, PendingOperationStatus::Failed, [], 'operation.failed', $this->redactor->redact($exception->getMessage()));
+                }
+            } else {
+                $candidate->finish(PendingOperationStatus::Failed, [], 'operation.failed', $this->redactor->redact($exception->getMessage()));
+            }
         } finally {
             flock($lease, LOCK_UN);
             fclose($lease);
         }
 
-        return PendingOperation::query()->where('uuid', $candidate->uuid)->first() ?? $candidate;
+        if ($candidate->type === PendingOperationType::LiveRestore || ! $this->tables->has('operations')) {
+            return $candidate;
+        }
+        try {
+            return PendingOperation::query()->where('uuid', $candidate->uuid)->first() ?? $candidate;
+        } catch (Throwable) {
+            return $candidate;
+        }
     }
 
     /** @return array<string, mixed> */
@@ -126,7 +156,65 @@ final readonly class PendingOperationProcessor
             fn (string $restoreUuid) => $this->approvals->linkRestore($operation->uuid, $restoreUuid),
         );
 
-        return $this->redactor->redactArray(array_intersect_key($report, array_flip(['ok', 'status', 'restore_uuid', 'run_uuid', 'requested_profile', 'warnings', 'blockers', 'notice'])));
+        $result = $this->redactor->redactArray(array_intersect_key($report, array_flip(['ok', 'status', 'restore_uuid', 'run_uuid', 'requested_profile', 'warnings', 'blockers', 'notice'])));
+        $status = $report['status'] ?? null;
+        if (is_string($status) && in_array($status, ['completed', 'failed', 'indeterminate'], true)) {
+            try {
+                $this->approvals->recordOutcome($operation->uuid, $status, is_string($report['restore_uuid'] ?? null) ? $report['restore_uuid'] : null);
+            } catch (Throwable) {
+                $result['notice'] = 'Request outcome evidence could not be updated; inspect the authoritative Restore Journal.';
+            }
+        }
+
+        return $result;
+    }
+
+    /** @param array<string, mixed> $result */
+    private function finishLiveRow(PendingOperation $operation, PendingOperationStatus $status, array $result, ?string $code = null, ?string $message = null): void
+    {
+        try {
+            if ($this->tables->has('operations') && $operation->finish($status, $result, $code, $message)) {
+                return;
+            }
+        } catch (Throwable) {
+            // Exact database replacement can remove this auxiliary table.
+        }
+        $operation->status = $status;
+        $operation->result = $result;
+        $operation->failure_code = $code;
+        $operation->failure_message = $message;
+    }
+
+    /** @return array{state: PendingOperationStatus, result: array<string, mixed>}|null */
+    private function journalOutcome(PendingOperation $operation): ?array
+    {
+        try {
+            $restoreUuid = $this->approvals->linkedRestoreUuid($operation->uuid);
+        } catch (Throwable) {
+            return null; // No consumed approval: execution was refused before restore work.
+        }
+        try {
+            $terminal = $restoreUuid === null ? null : $this->journals->find($restoreUuid)?->terminalState();
+            $state = match ($terminal) {
+                'completed' => PendingOperationStatus::Completed,
+                'failed' => PendingOperationStatus::Failed,
+                'indeterminate' => PendingOperationStatus::Indeterminate,
+                default => null,
+            };
+            if ($state !== null) {
+                try {
+                    $this->approvals->recordOutcome($operation->uuid, $terminal, $restoreUuid);
+                } catch (Throwable) {
+                    // The journal is authoritative even if correlation cannot be updated.
+                }
+
+                return ['state' => $state, 'result' => ['ok' => $state === PendingOperationStatus::Completed, 'status' => $terminal, 'restore_uuid' => $restoreUuid, 'notice' => 'Outcome recovered from the authoritative Restore Journal.']];
+            }
+        } catch (Throwable) {
+            // An unreadable journal cannot justify claiming physical failure.
+        }
+
+        return ['state' => PendingOperationStatus::Indeterminate, 'result' => ['ok' => false, 'status' => 'indeterminate', 'restore_uuid' => $restoreUuid, 'notice' => 'The consumed request has no readable terminal journal. Inspect and reconcile restore evidence before another live request.']];
     }
 
     /** @param array<string, mixed> $report

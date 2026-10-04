@@ -164,6 +164,7 @@ final readonly class LiveRestoreService
     public function run(string $runUuid, RestoreProfile $profile, LiveRestoreAuthorization $authorization, ?Closure $onJournalCreated = null): array
     {
         $runUuid = Identifiers::assertUuid($runUuid, 'The restore source run UUID');
+        $authorization->assertMatches($runUuid, $profile);
         $identity = $this->identities->current();
 
         // Global write lock + restore lock for the whole destructive lifecycle.

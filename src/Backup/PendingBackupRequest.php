@@ -10,15 +10,19 @@ use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\BackupSetting;
+use Quraba\Backup\Operations\PanelTableAvailability;
 
 final readonly class PendingBackupRequest
 {
-    public function __construct(private Repository $config) {}
+    public function __construct(private Repository $config, private PanelTableAvailability $tables) {}
 
     public function request(BackupProfile $profile): BackupRun
     {
         if (! $this->config->get('quraba-backup.enabled') || ! $this->config->get('quraba-backup.filament.pending_enabled')) {
             throw new \DomainException('Panel backup requests are disabled.');
+        }
+        if (! $this->tables->has('runs') || ! $this->tables->has('settings')) {
+            throw new \DomainException('Backup catalog tables are unavailable. Run the package migrations with php artisan migrate.');
         }
 
         $connection = (new BackupSetting)->getConnection();

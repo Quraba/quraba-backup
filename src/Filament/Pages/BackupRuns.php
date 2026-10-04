@@ -12,7 +12,6 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Section;
 use Filament\Tables;
-use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Filters\Filter;
 use Filament\Tables\Filters\SelectFilter;
@@ -27,6 +26,7 @@ use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Enums\ConsistencyLevel;
 use Quraba\Backup\Filament\BackupPanelAccess;
 use Quraba\Backup\Models\BackupRun;
+use Quraba\Backup\Operations\PanelTableAvailability;
 use Quraba\Backup\Security\SecretRedactor;
 use Throwable;
 
@@ -45,7 +45,12 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
 
     protected function getViewData(): array
     {
-        return ['pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled')];
+        $tables = app(PanelTableAvailability::class);
+
+        return [
+            'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
+            'catalogAvailable' => $tables->has('runs') && $tables->has('artifacts'),
+        ];
     }
 
     public function table(Table $table): Table
@@ -65,9 +70,9 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                 }),
                 TextColumn::make('consistency')->badge()->toggleable(),
                 TextColumn::make('trigger')->badge()->toggleable(isToggledHiddenByDefault: true),
-                IconColumn::make('archive')->label('Archive')->boolean()->state(fn (BackupRun $record): bool => $this->verified($record, ArtifactKind::ApplicationArchive)),
-                IconColumn::make('snapshot')->label('Snapshot')->boolean()->state(fn (BackupRun $record): bool => $this->verified($record, ArtifactKind::ResticSnapshot)),
-                IconColumn::make('complete')->label('Recovery Point')->boolean()->state(fn (BackupRun $record): bool => $this->complete($record)),
+                TextColumn::make('archive')->label('Archive')->badge()->state(fn (BackupRun $record): string => $this->componentStatus($record, ArtifactKind::ApplicationArchive))->color(fn (string $state): string => $this->componentColor($state)),
+                TextColumn::make('snapshot')->label('Snapshot')->badge()->state(fn (BackupRun $record): string => $this->componentStatus($record, ArtifactKind::ResticSnapshot))->color(fn (string $state): string => $this->componentColor($state)),
+                TextColumn::make('complete')->label('Recovery Point')->badge()->state(fn (BackupRun $record): string => $this->complete($record) ? 'Complete' : 'Incomplete')->color(fn (string $state): string => $state === 'Complete' ? 'success' : 'gray'),
                 TextColumn::make('uuid')->searchable(isIndividual: true)->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
@@ -113,7 +118,24 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                 ])->modalSubmitAction(false),
             ])
             ->defaultPaginationPageOption(20)
-            ->poll(fn (): ?string => BackupRun::query()->whereIn('status', ['pending', 'preflighting', 'running', 'verifying'])->exists() ? '20s' : null);
+            ->poll(fn (): ?string => app(PanelTableAvailability::class)->has('runs') && BackupRun::query()->whereIn('status', ['pending', 'preflighting', 'running', 'verifying'])->exists() ? '20s' : null);
+    }
+
+    private function componentStatus(BackupRun $run, ArtifactKind $kind): string
+    {
+        if (($kind === ArtifactKind::ApplicationArchive && $run->profile === BackupProfile::Media)
+            || ($kind === ArtifactKind::ResticSnapshot && $run->profile === BackupProfile::Database)) {
+            return 'N/A';
+        }
+
+        return $this->verified($run, $kind) ? 'Verified' : 'Missing / failed';
+    }
+
+    private function componentColor(string $status): string
+    {
+        return match ($status) {
+            'Verified' => 'success', 'N/A' => 'gray', default => 'danger',
+        };
     }
 
     private function verified(BackupRun $run, ArtifactKind $kind): bool

@@ -326,9 +326,14 @@ final readonly class RestoreJournalStore
             throw new InvalidArgumentException('the journal could not be moved into place');
         }
 
-        // Make the rename itself durable where a directory can be synced.
+        self::syncDirectory(dirname($path));
+    }
+
+    /** Make a private atomic rename durable on POSIX where supported. */
+    public static function syncDirectory(string $path): void
+    {
         if (! PathGuard::isWindows()) {
-            $directory = @fopen(dirname($path), 'r');
+            $directory = @fopen($path, 'r');
 
             if ($directory === false) {
                 throw new InvalidArgumentException('the journal directory could not be opened for syncing');

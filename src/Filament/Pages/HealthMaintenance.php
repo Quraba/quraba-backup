@@ -24,6 +24,7 @@ use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Filament\BackupPanelAccess;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\PendingOperation;
+use Quraba\Backup\Operations\PanelTableAvailability;
 use Quraba\Backup\Operations\PendingOperationRequest;
 use Quraba\Backup\Operations\WorkerHeartbeat;
 use Quraba\Backup\Scheduling\ScheduleSettings;
@@ -48,17 +49,17 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
         $requests = [];
         foreach ([[PendingOperationType::HealthRefresh, 'Refresh health'], [PendingOperationType::Doctor, 'Run Doctor'], [PendingOperationType::ResticCheck, 'Check repository'], [PendingOperationType::RetentionPlan, 'Plan retention']] as [$type, $label]) {
             $requests[] = Action::make($type->value)->label($label)
-                ->visible(fn (): bool => BackupPanelAccess::allows($type->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled'))
+                ->visible(fn (): bool => BackupPanelAccess::allows($type->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->requiresConfirmation()
                 ->action(fn () => $this->request($type));
         }
         $requests[] = Action::make('configure_schedule')->label('Edit schedules')
-            ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule'))
+            ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule') && app(PanelTableAvailability::class)->has('settings'))
             ->fillForm(fn (): array => $this->scheduleFormValues())
             ->schema($this->scheduleFields())
             ->action(fn (array $data) => $this->saveSchedule($data));
         $requests[] = Action::make('reset_schedule')->label('Reset schedule defaults')->color('warning')
-            ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule'))
+            ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule') && app(PanelTableAvailability::class)->has('settings'))
             ->requiresConfirmation()
             ->action(function (): void {
                 BackupPanelAccess::authorize('configure-schedule');
@@ -91,12 +92,21 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
     protected function getViewData(): array
     {
         BackupPanelAccess::authorize('view-dashboard');
+        $tables = app(PanelTableAvailability::class);
+        $operationsAvailable = $tables->has('operations');
         $latest = [];
-        foreach (PendingOperationType::cases() as $type) {
-            if ($type === PendingOperationType::LiveRestore || $type === PendingOperationType::DryRestore) {
-                continue;
+        try {
+            foreach (PendingOperationType::cases() as $type) {
+                if ($type === PendingOperationType::LiveRestore || $type === PendingOperationType::DryRestore) {
+                    continue;
+                }
+                $latest[$type->value] = $operationsAvailable ? PendingOperation::query()->where('type', $type->value)->latest('id')->first() : null;
             }
-            $latest[$type->value] = PendingOperation::query()->where('type', $type->value)->latest('id')->first();
+            $unresolved = $operationsAvailable ? PendingOperation::query()->whereIn('status', [PendingOperationStatus::Interrupted->value, PendingOperationStatus::Indeterminate->value])->latest('id')->limit(10)->get() : collect();
+        } catch (Throwable) {
+            $latest = [];
+            $unresolved = collect();
+            $operationsAvailable = false;
         }
         try {
             $schedule = app(ScheduleSettings::class)->all();
@@ -113,7 +123,9 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             'workerObserved' => app(WorkerHeartbeat::class)->observedAt(),
             'workerRecent' => app(WorkerHeartbeat::class)->recentlyObserved(),
             'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
-            'unresolved' => PendingOperation::query()->whereIn('status', [PendingOperationStatus::Interrupted->value, PendingOperationStatus::Indeterminate->value])->latest('id')->limit(10)->get(),
+            'operationsAvailable' => $operationsAvailable,
+            'maintenanceAvailable' => $tables->has('maintenance'),
+            'unresolved' => $unresolved,
             'secrets' => [
                 'B2 key ID' => filled(config('quraba-backup.storage.b2.key_id')),
                 'B2 application key' => filled(config('quraba-backup.storage.b2.application_key')),

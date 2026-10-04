@@ -81,13 +81,14 @@ final class PendingOperation extends PackageModel
     }
 
     /** @param array<string, mixed> $result */
-    public function finish(PendingOperationStatus $status, array $result = [], ?string $code = null, ?string $message = null): void
+    public function finish(PendingOperationStatus $status, array $result = [], ?string $code = null, ?string $message = null): bool
     {
         if (! in_array($status, [PendingOperationStatus::Completed, PendingOperationStatus::Failed, PendingOperationStatus::Indeterminate, PendingOperationStatus::Interrupted], true)) {
             throw new \InvalidArgumentException('An operation must finish in a terminal state.');
         }
         $redactor = app(SecretRedactor::class);
-        $this->move(PendingOperationStatus::Running, $status, [
+
+        return $this->move(PendingOperationStatus::Running, $status, [
             'finished_at' => CarbonImmutable::now('UTC'),
             'heartbeat_at' => CarbonImmutable::now('UTC'),
             'result' => $redactor->redactArray($result),

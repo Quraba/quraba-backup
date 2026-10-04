@@ -7,7 +7,9 @@ namespace Quraba\Backup\Operations;
 use Carbon\CarbonImmutable;
 use Quraba\Backup\Domain\Identifiers;
 use Quraba\Backup\Enums\PendingOperationType;
+use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Models\PendingOperation;
+use Quraba\Backup\Restore\Journal\RestoreJournalStore;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\PathGuard;
 use Quraba\Backup\Support\PrivateFile;
@@ -17,7 +19,13 @@ final class ConsumedLiveApproval
 {
     private bool $authorizationIssued = false;
 
-    private function __construct(public readonly string $operationUuid) {}
+    private function __construct(
+        public readonly string $operationUuid,
+        public readonly string $sourceRunUuid,
+        public readonly RestoreProfile $restoreProfile,
+        public readonly string $actorType,
+        public readonly string $actorId,
+    ) {}
 
     public function claimForAuthorization(): void
     {
@@ -30,9 +38,10 @@ final class ConsumedLiveApproval
     public static function consume(PendingOperation $operation, PackagePaths $paths): self
     {
         Identifiers::assertUuid($operation->uuid, 'The operation UUID');
-        if ($operation->type !== PendingOperationType::LiveRestore) {
+        if ($operation->type !== PendingOperationType::LiveRestore || ! $operation->restore_profile instanceof RestoreProfile || ! is_string($operation->source_run_uuid)) {
             throw new \RuntimeException('The operation is not a live restore.');
         }
+        Identifiers::assertUuid($operation->source_run_uuid, 'The restore source UUID');
         $directory = $paths->root.'/approvals';
         if (is_link($directory) || ! is_dir($directory)) {
             throw new \RuntimeException('The private approval directory is unavailable.');
@@ -61,7 +70,7 @@ final class ConsumedLiveApproval
         if (! is_array($data)
             || ($data['operation_uuid'] ?? null) !== $operation->uuid
             || ($data['source_run_uuid'] ?? null) !== $operation->source_run_uuid
-            || ($data['restore_profile'] ?? null) !== $operation->restore_profile?->value
+            || ($data['restore_profile'] ?? null) !== $operation->restore_profile->value
             || ($data['actor_type'] ?? null) !== $operation->actor_type
             || ($data['actor_id'] ?? null) !== $operation->actor_id
             || ! is_string($data['nonce'] ?? null)
@@ -74,6 +83,23 @@ final class ConsumedLiveApproval
             throw new \RuntimeException('The one-time approval could not be consumed.');
         }
 
-        return new self($operation->uuid);
+        // The rename is the one-use boundary. Prove the private bytes survived
+        // it and sync the containing directory before granting authorization.
+        RestoreJournalStore::syncDirectory($directory);
+        $usedHandle = @fopen($used, 'rb');
+        if ($usedHandle === false) {
+            throw new \RuntimeException('The consumed approval cannot be read back.');
+        }
+        try {
+            PrivateFile::assertStillPrivate($used, $usedHandle);
+            $readBack = stream_get_contents($usedHandle, 4097);
+        } finally {
+            fclose($usedHandle);
+        }
+        if (! is_string($readBack) || ! hash_equals($contents, $readBack)) {
+            throw new \RuntimeException('The consumed approval changed during the one-time transition.');
+        }
+
+        return new self($operation->uuid, (string) $operation->source_run_uuid, $operation->restore_profile, $operation->actor_type, $operation->actor_id);
     }
 }

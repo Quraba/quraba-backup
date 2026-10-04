@@ -1,5 +1,8 @@
 <x-filament-panels::page>
     <div class="space-y-6">
+        @if (! $operationsAvailable || ! $maintenanceAvailable)
+            <x-filament::section heading="Panel history unavailable">Some operational tables are missing. After verifying a restored application, run <code>php artisan migrate</code>.</x-filament::section>
+        @endif
         @if (! $pendingEnabled)
             <x-filament::section heading="Panel requests are disabled">The host must enable the pending-operation feature before checks can be requested here.</x-filament::section>
         @endif
@@ -12,13 +15,13 @@
                     @if ($operation?->failure_message)<p>{{ $operation->failure_message }}</p>@endif
                     @if ($type === 'retention_plan' && is_array($operation?->result['plan'] ?? null))
                         <p>Keep {{ $operation->result['plan']['keep'] ?? 0 }} · Would expire {{ $operation->result['plan']['expire'] ?? 0 }}</p>
-                        <details><summary>Retention policy</summary>@foreach (($operation->result['plan']['policies'] ?? []) as $family => $policy)<p>{{ ucfirst($family) }}: @foreach ($policy as $period => $count){{ $period }} {{ $count }}@if (! $loop->last), @endif @endforeach</p>@endforeach</details>
-                        <details><summary>Retention decisions</summary>@foreach (($operation->result['plan']['decisions'] ?? []) as $decision)<p>{{ $decision['run_uuid'] ?? '' }} · {{ $decision['decision'] ?? '' }} · {{ implode(', ', $decision['reasons'] ?? []) }}</p>@endforeach</details>
+                        <x-filament::section heading="Retention policy" collapsible collapsed>@foreach (($operation->result['plan']['policies'] ?? []) as $family => $policy)<p>{{ ucfirst($family) }}: @foreach ($policy as $period => $count){{ $period }} {{ $count }}@if (! $loop->last), @endif @endforeach</p>@endforeach</x-filament::section>
+                        <x-filament::section heading="Retention decisions" collapsible collapsed>@foreach (($operation->result['plan']['decisions'] ?? []) as $decision)<p>{{ $decision['run_uuid'] ?? '' }} · {{ $decision['decision'] ?? '' }} · {{ implode(', ', $decision['reasons'] ?? []) }}</p>@endforeach</x-filament::section>
                     @elseif (is_array($operation?->result['checks'] ?? null))
                         @foreach (['fail' => 'Failed', 'warn' => 'Warning', 'pass' => 'Healthy', 'skip' => 'Skipped'] as $status => $heading)
                             @php $checks = array_filter($operation->result['checks'], fn ($check) => ($check['status'] ?? '') === $status); @endphp
                             @if ($checks)
-                                <details @if (in_array($status, ['fail', 'warn'], true)) open @endif><summary>{{ $heading }} ({{ count($checks) }})</summary>@foreach ($checks as $check)<p>{{ $check['label'] ?? $check['id'] ?? 'Check' }}: {{ $check['message'] ?? '' }}</p>@endforeach</details>
+                                <x-filament::section :heading="$heading.' ('.count($checks).')'" collapsible :collapsed="! in_array($status, ['fail', 'warn'], true)">@foreach ($checks as $check)<p>{{ $check['label'] ?? $check['id'] ?? 'Check' }}: {{ $check['message'] ?? '' }}</p>@endforeach</x-filament::section>
                             @endif
                         @endforeach
                     @endif
@@ -26,7 +29,7 @@
             @endforeach
         </x-filament::section>
         <x-filament::section heading="Schedules and worker" description="Database overrides take effect on the next scheduler invocation. A database restore can rewind them; deployment config remains the fallback.">
-            <p>Worker: {{ $workerRecent ? 'Recently observed' : 'Not recently observed' }} · Last seen {{ $workerObserved ?? 'never' }}</p>
+            <p>Panel operation worker: {{ ! $pendingEnabled ? 'Disabled' : ($workerRecent ? 'Recently observed' : 'Not recently observed') }}@if ($pendingEnabled) · Last seen {{ $workerObserved ?? 'never' }}@endif</p>
             @if ($scheduleError)<p>{{ $scheduleError }}</p>@endif
             @foreach ($schedule as $key => $setting)
                 <p>{{ ucfirst(str_replace('_', ' ', $key)) }}: {{ is_array($setting['value']) ? (($setting['value']['enabled'] ?? false) ? ($setting['value']['frequency'] ?? '').' '.($setting['value']['time'] ?? '') : 'Disabled') : (is_bool($setting['value']) ? ($setting['value'] ? 'Enabled' : 'Disabled') : ($setting['value'] ?? 'Application default')) }} <x-filament::badge color="gray">{{ $setting['source'] }}</x-filament::badge></p>
@@ -40,7 +43,11 @@
             @endforelse
         </x-filament::section>
         <x-filament::section heading="Maintenance history">
-            {{ $this->table }}
+            @if ($maintenanceAvailable)
+                {{ $this->table }}
+            @else
+                <p>Maintenance history is unavailable until package migrations are run.</p>
+            @endif
         </x-filament::section>
         <x-filament::section heading="Recovery configuration" description="Secret values are managed on the server and are never shown here.">
             @foreach ($secrets as $name => $configured)

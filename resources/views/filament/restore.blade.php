@@ -1,5 +1,10 @@
 <x-filament-panels::page>
     <div class="space-y-6">
+        @if (! $operationsAvailable || ! $restoresAvailable)
+            <x-filament::section heading="Panel operation history unavailable">
+                The restored database may predate these package tables. Verify the restored application, then run the host application's normal <code>php artisan migrate</code> process. The external live restore journal below remains the authority for physical restore state.
+            </x-filament::section>
+        @endif
         @if (! $pendingEnabled)
             <x-filament::section heading="Panel requests are disabled">
                 The host must enable the pending-operation feature before Dry Restore or Live Restore can be requested here.
@@ -24,14 +29,18 @@
             @forelse ($requests as $request)
                 <p>{{ $request->requested_at?->format('M j, Y H:i') }} UTC · {{ str_replace('_', ' ', $request->type->value) }} · <x-filament::badge :color="match ($request->status->value) { 'completed' => 'success', 'failed', 'indeterminate', 'interrupted' => 'danger', default => 'warning' }">{{ $request->status->value }}</x-filament::badge> · {{ $request->uuid }}</p>
                 @if ($request->type->value === 'dry_restore' && $request->result)
-                    <details class="mt-1 mb-3"><summary>Validation result</summary><p>Archive verified: {{ ($request->result['archive_verified'] ?? false) ? 'Yes' : 'No' }} · APP_KEY: {{ $request->result['app_key_compatibility'] ?? 'unknown' }} · Release: {{ $request->result['release_compatibility'] ?? 'unknown' }} · Database validation: {{ $request->result['db_validation_level'] ?? 'unknown' }}</p><p>Repository: {{ $request->result['repository_id'] ?? 'unknown' }} · Snapshot: {{ $request->result['snapshot_id'] ?? 'unknown' }} · Atomic media rename: {{ ($request->result['atomic_rename'] ?? false) ? 'Yes' : 'No' }}</p>@foreach (($request->result['blockers'] ?? []) as $blocker)<p>Blocker: {{ $blocker }}</p>@endforeach @foreach (($request->result['warnings'] ?? []) as $warning)<p>Warning: {{ $warning }}</p>@endforeach <p>Nothing was changed in the live application.</p></details>
+                    <x-filament::section heading="Validation result" collapsible collapsed><p>Archive verified: {{ ($request->result['archive_verified'] ?? false) ? 'Yes' : 'No' }} · APP_KEY: {{ $request->result['app_key_compatibility'] ?? 'unknown' }} · Release: {{ $request->result['release_compatibility'] ?? 'unknown' }} · Database validation: {{ $request->result['db_validation_level'] ?? 'unknown' }}</p><p>Repository: {{ $request->result['repository_id'] ?? 'unknown' }} · Snapshot: {{ $request->result['snapshot_id'] ?? 'unknown' }} · Atomic media rename: {{ ($request->result['atomic_rename'] ?? false) ? 'Yes' : 'No' }}</p>@foreach (($request->result['blockers'] ?? []) as $blocker)<p>Blocker: {{ $blocker }}</p>@endforeach @foreach (($request->result['warnings'] ?? []) as $warning)<p>Warning: {{ $warning }}</p>@endforeach <p>Nothing was changed in the live application.</p></x-filament::section>
                 @endif
             @empty
                 <p>No background restore requests yet.</p>
             @endforelse
         </x-filament::section>
         <x-filament::section heading="Restore history" description="The external journal is authoritative for live restore state; the database table below is an audit mirror.">
-            {{ $this->table }}
+            @if ($restoresAvailable)
+                {{ $this->table }}
+            @else
+                <p>The database restore audit table is unavailable. Review the external journals below.</p>
+            @endif
         </x-filament::section>
         <x-filament::section heading="Live restore journals">
             @forelse (($journals['journals'] ?? []) as $journal)
@@ -42,7 +51,7 @@
         </x-filament::section>
         <x-filament::section heading="Queued live request evidence" description="Private request evidence links a panel request to the authoritative restore journal, even if the application database was replaced.">
             @forelse ($approvalHistory as $approval)
-                <p>Request {{ $approval['operation_uuid'] }} · Restore {{ $approval['restore_uuid'] ?? 'not started' }} · Source {{ $approval['source_run_uuid'] ?? 'unknown' }}</p>
+                <p>Request {{ $approval['operation_uuid'] }} · Restore {{ $approval['restore_uuid'] ?? 'not started' }} · Source {{ $approval['source_run_uuid'] ?? 'unknown' }} · Worker outcome {{ $approval['worker_outcome']['status'] ?? 'not recorded' }}@if (isset($approval['evidence_error'])) · {{ $approval['evidence_error'] }}@endif. Confirm physical status in the journal above.</p>
             @empty
                 <p>No consumed panel live-restore approvals on this host.</p>
             @endforelse

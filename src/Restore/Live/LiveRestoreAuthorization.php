@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Quraba\Backup\Restore\Live;
 
 use Illuminate\Contracts\Config\Repository;
+use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Exceptions\RestoreFailed;
 use Quraba\Backup\Operations\ConsumedLiveApproval;
 
@@ -20,7 +21,12 @@ final readonly class LiveRestoreAuthorization
 {
     public const string DEFAULT_PHRASE = 'RESTORE_APPLICATION';
 
-    private function __construct(public bool $cleanHost) {}
+    private function __construct(
+        public bool $cleanHost,
+        public ?string $queuedOperationUuid = null,
+        private ?string $queuedSourceUuid = null,
+        private ?RestoreProfile $queuedProfile = null,
+    ) {}
 
     public static function phrase(Repository $config): string
     {
@@ -53,6 +59,16 @@ final readonly class LiveRestoreAuthorization
     {
         $approval->claimForAuthorization();
 
-        return new self(false);
+        return new self(false, $approval->operationUuid, $approval->sourceRunUuid, $approval->restoreProfile);
+    }
+
+    public function assertMatches(string $runUuid, RestoreProfile $profile): void
+    {
+        if ($this->queuedOperationUuid === null) {
+            return; // The existing CLI --force + phrase proof is unchanged.
+        }
+        if ($this->queuedSourceUuid === null || ! hash_equals($this->queuedSourceUuid, $runUuid) || $this->queuedProfile !== $profile) {
+            throw RestoreFailed::confirmationRequired('the consumed panel approval does not match the exact source and restore scope');
+        }
     }
 }

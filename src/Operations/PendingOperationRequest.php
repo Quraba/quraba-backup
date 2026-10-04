@@ -25,6 +25,7 @@ final readonly class PendingOperationRequest
         private LiveApprovalStore $approvals,
         private RestoreJournalStore $journals,
         private QuiescenceProvider $quiescence,
+        private PanelTableAvailability $tables,
     ) {}
 
     public function submit(
@@ -42,6 +43,9 @@ final readonly class PendingOperationRequest
         }
         if (! $this->config->get('quraba-backup.enabled', true)) {
             throw new \DomainException('Quraba Backup is disabled.');
+        }
+        if (! $this->tables->has('operations') || ! $this->tables->has('settings')) {
+            throw new \DomainException('Panel operation history is unavailable until the package migrations are run with php artisan migrate.');
         }
         if (in_array($type, [PendingOperationType::DryRestore, PendingOperationType::LiveRestore], true)) {
             if ($sourceUuid === null || $profile === null) {

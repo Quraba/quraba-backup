@@ -85,8 +85,10 @@ final class SchedulingTest extends TestCase
         $scheduler = $this->app->make(BackupScheduler::class);
         $scheduler->register($schedule);
 
-        $pending = array_values(array_filter($schedule->events(), static fn (Event $event): bool => str_contains((string) $event->command, 'quraba:backup:pending')));
+        $pending = array_values(array_filter($schedule->events(), static fn (Event $event): bool => str_contains((string) $event->command, 'quraba:backup:pending') && ! str_contains((string) $event->command, 'pending-operations')));
+        $operations = array_values(array_filter($schedule->events(), static fn (Event $event): bool => str_contains((string) $event->command, 'quraba:backup:pending-operations')));
         self::assertCount(1, $pending);
+        self::assertCount(1, $operations);
         self::assertSame('* * * * *', $pending[0]->expression);
         self::assertSame(BackupScheduler::platformSupportsBackground(), $pending[0]->runInBackground);
     }

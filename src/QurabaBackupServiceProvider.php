@@ -32,6 +32,7 @@ use Quraba\Backup\Console\IdentityCommand;
 use Quraba\Backup\Console\InstallResticCommand;
 use Quraba\Backup\Console\ListCommand;
 use Quraba\Backup\Console\PendingCommand;
+use Quraba\Backup\Console\PendingOperationCommand;
 use Quraba\Backup\Console\ReconcileCommand;
 use Quraba\Backup\Console\RecoveryChecklistCommand;
 use Quraba\Backup\Console\ResticCheckCommand;
@@ -49,6 +50,7 @@ use Quraba\Backup\Contracts\DatabaseDumper;
 use Quraba\Backup\Contracts\DatabaseReplacement;
 use Quraba\Backup\Contracts\LockManager;
 use Quraba\Backup\Contracts\ObjectStorage;
+use Quraba\Backup\Contracts\PendingOperationActorResolver;
 use Quraba\Backup\Contracts\QuiescenceProvider;
 use Quraba\Backup\Contracts\ReleaseDownloader;
 use Quraba\Backup\Contracts\RestoreStepObserver;
@@ -74,6 +76,8 @@ use Quraba\Backup\Maintenance\ResticMaintenanceService;
 use Quraba\Backup\Manifest\ManifestStore;
 use Quraba\Backup\Manifest\RemoteManifestCatalog;
 use Quraba\Backup\Media\MediaRootResolver;
+use Quraba\Backup\Operations\EloquentActorResolver;
+use Quraba\Backup\Operations\PendingOperationProcessor;
 use Quraba\Backup\Recovery\CatalogRebuilder;
 use Quraba\Backup\Recovery\EnvBootstrapper;
 use Quraba\Backup\Recovery\RecoveryChecklist;
@@ -111,6 +115,7 @@ use Quraba\Backup\Retention\RetentionInventory;
 use Quraba\Backup\Retention\RetentionPlanner;
 use Quraba\Backup\Retention\RetentionTombstoneStore;
 use Quraba\Backup\Scheduling\BackupScheduler;
+use Quraba\Backup\Scheduling\ScheduleSettings;
 use Quraba\Backup\Security\KnownSecrets;
 use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Storage\ObjectStorageFactory;
@@ -163,6 +168,9 @@ final class QurabaBackupServiceProvider extends ServiceProvider
         $this->app->singleton(LockManager::class, FileLockManager::class);
         $this->app->singleton(FileLockManager::class);
         $this->app->singleton(OperationCoordinator::class);
+        $this->app->bindIf(PendingOperationActorResolver::class, EloquentActorResolver::class);
+        $this->app->singleton(PendingOperationProcessor::class);
+        $this->app->singleton(ScheduleSettings::class);
 
         $this->app->singleton(WorkspaceManager::class, fn (Application $app): WorkspaceManager => new WorkspaceManager(
             $app->make(PackagePaths::class),
@@ -224,6 +232,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
             RecoveryChecklistCommand::class,
             RunCommand::class,
             PendingCommand::class,
+            PendingOperationCommand::class,
             ListCommand::class,
             ReconcileCommand::class,
         ]);

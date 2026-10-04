@@ -4,8 +4,11 @@ All settings use the `QURABA_BACKUP_*` namespace. Secrets are read only from the
 stored in the database.
 
 The optional Filament 5 panel is configured in the published `filament` section. Set
-`pending_enabled=true` to schedule panel backup requests, then define the named Gates or callbacks in
+`pending_enabled=true` to schedule panel backup and background operation requests. `live_restore_enabled`
+is separate and defaults to `false`. Define the named Gates or callbacks in
 [the Filament guide](filament.md). Panel authorizations default to denied. No secret is editable there.
+The panel can store allowlisted schedule overrides in `BackupSetting`; deployment config remains the
+default, and a database restore may rewind the overrides.
 
 Database metadata claims exact object completeness only when direct grants prove table reads, view
 visibility, trigger visibility, routine visibility and EVENT capability, with the matching dump tool for

@@ -6,14 +6,15 @@ namespace Quraba\Backup\Restore\Live;
 
 use Illuminate\Contracts\Config\Repository;
 use Quraba\Backup\Exceptions\RestoreFailed;
+use Quraba\Backup\Operations\ConsumedLiveApproval;
 
 /**
  * Proof that an operator explicitly authorized a LIVE restore.
  *
- * The live restore service cannot be started without one, and one can only
- * be obtained by supplying BOTH the force flag and the exact, configured
- * confirmation phrase. An interactive yes/no is not enough; a phrase that
- * differs by case or whitespace is not enough.
+ * The live restore service cannot be started without one. CLI callers supply
+ * BOTH the force flag and the exact configured phrase. The panel worker must
+ * instead pass a consumed, one-time private approval. An interactive yes/no
+ * is insufficient; a phrase differing by case or whitespace is insufficient.
  */
 final readonly class LiveRestoreAuthorization
 {
@@ -45,5 +46,13 @@ final readonly class LiveRestoreAuthorization
         }
 
         return new self($cleanHost);
+    }
+
+    /** @internal Only the scheduler processor passes a consumed private approval. */
+    public static function fromConsumedApproval(ConsumedLiveApproval $approval): self
+    {
+        $approval->claimForAuthorization();
+
+        return new self(false);
     }
 }

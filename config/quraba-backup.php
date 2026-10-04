@@ -126,6 +126,7 @@ return [
     // panel. Every ability defaults to denied until a host Gate/callback grants it.
     'filament' => [
         'pending_enabled' => false,
+        'live_restore_enabled' => false,
         'authorization' => [],
     ],
 

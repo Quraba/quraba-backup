@@ -7,8 +7,9 @@ namespace Quraba\Backup\Filament;
 use Filament\Contracts\Plugin;
 use Filament\Panel;
 use Quraba\Backup\Filament\Pages\BackupDashboard;
-use Quraba\Backup\Filament\Pages\BackupOperations;
 use Quraba\Backup\Filament\Pages\BackupRuns;
+use Quraba\Backup\Filament\Pages\HealthMaintenance;
+use Quraba\Backup\Filament\Pages\Restore;
 
 final class QurabaBackupPlugin implements Plugin
 {
@@ -24,7 +25,7 @@ final class QurabaBackupPlugin implements Plugin
 
     public function register(Panel $panel): void
     {
-        $panel->pages([BackupDashboard::class, BackupRuns::class, BackupOperations::class]);
+        $panel->pages([BackupDashboard::class, BackupRuns::class, Restore::class, HealthMaintenance::class]);
     }
 
     public function boot(Panel $panel): void {}

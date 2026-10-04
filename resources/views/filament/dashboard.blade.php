@@ -1,45 +1,50 @@
 <x-filament-panels::page>
     <div class="space-y-6">
-        <div class="rounded-xl border p-5">
-            <h2 class="text-lg font-semibold">Recovery health: {{ strtoupper($health['state']) }}</h2>
-            <p class="text-sm">Physical sampling of the latest backup artifacts and Restic repository.</p>
-            <p class="mt-1 text-sm">Repository: {{ $repository['details']['state'] ?? $repository['status'] ?? 'unknown' }} @if (isset($repository['details']['repository_id'])) · {{ $repository['details']['repository_id'] }} @endif</p>
-            <ul class="mt-3 space-y-1 text-sm">
-                @foreach ($health['checks'] as $check)
-                    @if (in_array($check['status'], ['warn', 'fail'], true))
-                        <li><strong>{{ strtoupper($check['status']) }}</strong> {{ $check['label'] }}: {{ $check['message'] }}</li>
-                    @endif
-                @endforeach
-            </ul>
-        </div>
-        <div class="grid gap-4 md:grid-cols-2">
-            @foreach (['Latest database backup' => $database, 'Latest media backup' => $media, 'Latest Recovery Point' => $recovery, 'Latest quiesced Recovery Point' => $quiesced] as $label => $run)
-                <div class="rounded-xl border p-5">
-                    <h3 class="font-semibold">{{ $label }}</h3>
-                    <p class="font-mono text-sm">{{ $run?->uuid ?? 'None' }}</p>
-                    <p class="text-sm">{{ $run?->requested_at?->toDateTimeString() ?? 'No backup recorded' }} UTC</p>
-                </div>
+        <x-filament::section heading="Recovery health" description="Can this application be recovered from its recorded backups?">
+            <div class="flex flex-wrap items-center gap-3">
+                <x-filament::badge :color="match ($health['state'] ?? 'unknown') { 'healthy' => 'success', 'degraded' => 'warning', 'failed' => 'danger', default => 'gray' }">
+                    {{ ucfirst($health['state'] ?? 'unknown') }}
+                </x-filament::badge>
+                <span>Checked {{ $health['checked_at'] ?? 'never' }}</span>
+            </div>
+            @if (($journals['unresolved'] ?? 0) > 0 || ($journals['unreadable'] ?? []) !== [])
+                <p class="mt-3 font-semibold">Restore attention required: {{ $journals['unresolved'] ?? 0 }} unresolved; {{ count($journals['unreadable'] ?? []) }} unreadable journal(s).</p>
+            @endif
+            @foreach (($health['checks'] ?? []) as $check)
+                @if (in_array($check['status'] ?? '', ['warn', 'fail'], true))
+                    <p class="mt-2"><x-filament::badge :color="($check['status'] ?? '') === 'fail' ? 'danger' : 'warning'">{{ strtoupper($check['status']) }}</x-filament::badge> {{ $check['label'] }}: {{ $check['message'] }}</p>
+                @endif
             @endforeach
+        </x-filament::section>
+
+        <div class="grid gap-4 md:grid-cols-2">
+            <x-filament::section heading="Repository & integrity">
+                <p>Repository: {{ $repository['message'] ?? 'No recent health result' }}</p>
+                <p class="mt-2">Last successful integrity check: {{ $resticCheck?->finished_at?->setTimezone(config('app.timezone', 'UTC'))->format('M j, Y H:i') ?? 'None recorded' }}</p>
+            </x-filament::section>
+            <x-filament::section heading="Application & worker">
+                <p>Environment: {{ $environment }}</p>
+                <p>Backups: {{ $backupEnabled ? 'Enabled' : 'Disabled' }}</p>
+                <p>Recovery secrets: {{ $secretsAcknowledged ? 'Acknowledged' : 'Not acknowledged' }}</p>
+                <p>Worker: {{ $workerRecent ? 'Recently observed' : 'Not recently observed' }} · Last seen {{ $workerObserved ?? 'never' }}</p>
+            </x-filament::section>
         </div>
-        <div class="rounded-xl border p-5">
-            <h3 class="font-semibold">Recent non-complete backups</h3>
-            <ul class="mt-2 text-sm">
-                @forelse ($warnings as $run)
-                    <li>{{ $run->uuid }} — {{ $run->status->value }} @if ($run->failure_code) ({{ $run->failure_code }}) @endif</li>
-                @empty
-                    <li>None in the recent catalog.</li>
-                @endforelse
-            </ul>
-        </div>
-        <div class="rounded-xl border p-5">
-            <h3 class="font-semibold">Configured schedules</h3>
-            <ul class="mt-2 text-sm">
-                @forelse ($schedules as $schedule)
-                    <li>{{ $schedule->task }} — {{ $schedule->describe() }}</li>
-                @empty
-                    <li>None enabled.</li>
-                @endforelse
-            </ul>
-        </div>
+
+        <x-filament::section heading="Recent backup problems">
+            @forelse ($warnings as $run)
+                <p>{{ $run->requested_at?->setTimezone(config('app.timezone', 'UTC'))->format('M j, Y H:i') }} — {{ ucfirst($run->profile->value) }}: <x-filament::badge :color="$run->status->value === 'failed' || $run->status->value === 'indeterminate' ? 'danger' : 'warning'">{{ $run->status->value }}</x-filament::badge></p>
+            @empty
+                <p>No recent failed, partial or indeterminate backups.</p>
+            @endforelse
+        </x-filament::section>
+
+        <x-filament::section heading="Configured schedules" description="Planned times require a working cron entry. The worker observation above shows whether this host has recently run it.">
+            @if ($scheduleError)<p>{{ $scheduleError }}</p>@endif
+            @forelse ($schedules as $schedule)
+                <p>{{ ucfirst(str_replace('_', ' ', $schedule->task)) }}: {{ $schedule->describe() }}</p>
+            @empty
+                <p>No schedule is currently enabled.</p>
+            @endforelse
+        </x-filament::section>
     </div>
 </x-filament-panels::page>

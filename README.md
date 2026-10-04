@@ -46,6 +46,7 @@ All package commands use the `quraba:backup:*` namespace (bare `backup:*` belong
 |---|---|
 | `quraba:backup:run [--profile=database\|media\|recovery] [--json]` | Create a verified backup (default `recovery`); exit 0 completed, 2 partial, 3 indeterminate, 1 failed |
 | `quraba:backup:pending [--json]` | Process one authorized pending panel request under the operation lock; scheduled when enabled |
+| `quraba:backup:pending-operations` | Process one typed background panel operation and record worker heartbeat; scheduled when enabled |
 | `quraba:backup:list [--limit=] [--profile=] [--json]` | Browse the local catalog |
 | `quraba:backup:reconcile [--dry-run] [--json]` | Resolve interrupted runs from physical evidence |
 | `quraba:backup:health [--json]` | Recovery health: healthy, degraded, failed or unknown; optional transition alerts |

@@ -5,24 +5,29 @@ declare(strict_types=1);
 namespace Quraba\Backup\Filament\Pages;
 
 use Filament\Pages\Page;
-use Quraba\Backup\Enums\ArtifactKind;
-use Quraba\Backup\Enums\ArtifactStatus;
-use Quraba\Backup\Enums\BackupProfile;
-use Quraba\Backup\Enums\BackupStatus;
-use Quraba\Backup\Enums\ConsistencyLevel;
+use Quraba\Backup\Enums\PendingOperationStatus;
+use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Filament\BackupPanelAccess;
-use Quraba\Backup\Health\BackupHealthService;
-use Quraba\Backup\Models\BackupArtifact;
+use Quraba\Backup\Filament\Widgets\BackupStats;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
+use Quraba\Backup\Models\PendingOperation;
+use Quraba\Backup\Operations\WorkerHeartbeat;
+use Quraba\Backup\Restore\Live\RestoreReconciler;
 use Quraba\Backup\Scheduling\BackupScheduler;
+use Quraba\Backup\Security\SecretRedactor;
 use Throwable;
 
 final class BackupDashboard extends Page
 {
     protected string $view = 'quraba-backup::filament.dashboard';
 
-    protected static ?string $navigationLabel = 'Backup health';
+    protected static ?string $navigationLabel = 'Backup Dashboard';
+
+    protected function getHeaderWidgets(): array
+    {
+        return [BackupStats::class];
+    }
 
     public static function canAccess(): bool
     {
@@ -34,22 +39,50 @@ final class BackupDashboard extends Page
     {
         BackupPanelAccess::authorize('view-dashboard');
 
+        $healthRun = PendingOperation::query()->where('type', PendingOperationType::HealthRefresh->value)
+            ->whereIn('status', [PendingOperationStatus::Completed->value, PendingOperationStatus::Failed->value])->latest('id')->first();
+        $health = $healthRun === null || ! is_array($healthRun->result)
+            ? ['state' => 'unknown', 'checks' => [], 'checked_at' => null]
+            : $healthRun->result;
+        if ($healthRun?->finished_at === null || $healthRun->finished_at->lessThan(now('UTC')->subHour())) {
+            $health['state'] = 'unknown';
+        } elseif ($healthRun->status === PendingOperationStatus::Failed) {
+            $health['state'] = 'failed';
+        }
         try {
-            $health = app(BackupHealthService::class)->check(true)->toArray();
+            $journals = app(RestoreReconciler::class)->overview();
         } catch (Throwable) {
-            $health = ['state' => 'unknown', 'checks' => []];
+            $journals = ['unresolved' => 0, 'unreadable' => ['unavailable']];
+        }
+        try {
+            $schedules = app(BackupScheduler::class)->definitions();
+            $scheduleError = null;
+        } catch (Throwable $exception) {
+            $schedules = [];
+            $scheduleError = app(SecretRedactor::class)->redact($exception->getMessage());
+        }
+
+        $warnings = BackupRun::query()->whereIn('status', ['failed', 'partial', 'indeterminate'])->latest('id')->limit(5)->get();
+        $workerRecent = app(WorkerHeartbeat::class)->recentlyObserved();
+        if ($journals['unresolved'] > 0 || $journals['unreadable'] !== []) {
+            $health['state'] = 'failed';
+        } elseif (($health['state'] ?? null) === 'healthy' && ($warnings->isNotEmpty() || ! $workerRecent || $scheduleError !== null)) {
+            $health['state'] = 'degraded';
         }
 
         return [
             'health' => $health,
-            'repository' => collect($health['checks'])->firstWhere('id', 'health.repository'),
-            'database' => BackupArtifact::query()->with('run')->where('kind', ArtifactKind::ApplicationArchive->value)->where('status', ArtifactStatus::Verified->value)->latest('id')->first()?->run,
-            'media' => BackupArtifact::query()->with('run')->where('kind', ArtifactKind::ResticSnapshot->value)->where('status', ArtifactStatus::Verified->value)->latest('id')->first()?->run,
-            'recovery' => BackupRun::query()->where('profile', BackupProfile::Recovery->value)->where('status', BackupStatus::Completed->value)->latest('id')->first(),
-            'quiesced' => BackupRun::query()->where('profile', BackupProfile::Recovery->value)->where('status', BackupStatus::Completed->value)->where('consistency', ConsistencyLevel::Quiesced->value)->latest('id')->first(),
-            'warnings' => BackupRun::query()->whereIn('status', ['failed', 'partial', 'indeterminate'])->latest('id')->limit(5)->get(),
-            'maintenance' => BackupMaintenanceRun::query()->latest('id')->limit(5)->get(),
-            'schedules' => app(BackupScheduler::class)->definitions(),
+            'repository' => collect(is_array($health['checks'] ?? null) ? $health['checks'] : [])->firstWhere('id', 'health.repository'),
+            'warnings' => $warnings,
+            'resticCheck' => BackupMaintenanceRun::query()->where('operation', 'restic_check')->where('status', 'completed')->latest('finished_at')->first(),
+            'schedules' => $schedules,
+            'scheduleError' => $scheduleError,
+            'journals' => $journals,
+            'workerObserved' => app(WorkerHeartbeat::class)->observedAt(),
+            'workerRecent' => $workerRecent,
+            'environment' => config('quraba-backup.environment') ?: config('app.env'),
+            'backupEnabled' => (bool) config('quraba-backup.enabled'),
+            'secretsAcknowledged' => (bool) config('quraba-backup.recovery_secrets_acknowledged'),
         ];
     }
 }

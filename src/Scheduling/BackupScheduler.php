@@ -10,6 +10,7 @@ use Illuminate\Contracts\Config\Repository;
 use Psr\Log\LoggerInterface;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Exceptions\ConfigurationException;
+use Quraba\Backup\Security\SecretRedactor;
 use Quraba\Backup\Support\PackagePaths;
 use Quraba\Backup\Support\PathGuard;
 use WeakMap;
@@ -50,6 +51,7 @@ final class BackupScheduler
         private readonly Repository $config,
         private readonly PackagePaths $paths,
         private readonly LoggerInterface $logger,
+        private readonly ScheduleSettings $settings,
     ) {
         $this->registered = new WeakMap;
     }
@@ -59,14 +61,16 @@ final class BackupScheduler
      */
     public function definitions(): array
     {
-        if (! (bool) $this->config->get('quraba-backup.enabled', true) || ! (bool) $this->config->get('quraba-backup.schedule.enabled', true)) {
+        if (! (bool) $this->config->get('quraba-backup.enabled', true) || ! $this->settings->effective('enabled')['value']) {
             return [];
         }
 
         $definitions = [];
 
         foreach ([...array_map(static fn (BackupProfile $p): string => $p->value, BackupProfile::cases()), ...ScheduleDefinition::MAINTENANCE_TASKS] as $task) {
-            $settings = $this->config->get('quraba-backup.schedule.'.$task);
+            $settings = in_array($task, ['database', 'media', 'recovery'], true)
+                ? $this->settings->effective($task)['value']
+                : $this->config->get('quraba-backup.schedule.'.$task);
             $definition = ScheduleDefinition::fromConfig($task, is_array($settings) ? $settings : null);
 
             if ($definition !== null) {
@@ -130,7 +134,16 @@ final class BackupScheduler
         $background = $this->runsInBackground();
         $events = [];
 
-        foreach ($this->definitions() as $definition) {
+        try {
+            $definitions = $this->definitions();
+            $timezone = $this->settings->effective('timezone')['value'];
+        } catch (\Throwable $exception) {
+            $this->logger->error('Quraba Backup profile schedules were refused: '.app(SecretRedactor::class)->redact($exception->getMessage()));
+            $definitions = [];
+            $timezone = null;
+        }
+
+        foreach ($definitions as $definition) {
             $event = $schedule->command(...$this->command($definition));
 
             match ($definition->frequency) {
@@ -138,8 +151,6 @@ final class BackupScheduler
                 'weekly' => $event->weeklyOn($definition->weekDay(), $definition->time),
                 default => $event->monthlyOn($definition->monthDay(), $definition->time),
             };
-
-            $timezone = $this->config->get('quraba-backup.schedule.timezone');
 
             if (is_string($timezone) && $timezone !== '') {
                 $event->timezone($timezone);
@@ -193,6 +204,25 @@ final class BackupScheduler
                 $event->evenInMaintenanceMode();
             }
             $events[] = $event;
+
+            $operations = $schedule->command('quraba:backup:pending-operations')
+                ->everyMinute()
+                ->name('quraba-backup:pending-operations')
+                ->description('Process one pending panel operation and record worker heartbeat')
+                ->sendOutputTo($this->outputPath('pending-operations'))
+                ->before(function (): void {
+                    PackagePaths::ensureDirectory(dirname($this->outputPath('pending-operations')));
+                })
+                ->onFailure(function () use (&$operations): void {
+                    $this->logger->error('A pending Quraba panel operation exited unsuccessfully.', ['exit_code' => $operations?->exitCode]);
+                });
+            if ($background) {
+                $operations->runInBackground();
+            }
+            if ($this->runsInMaintenanceMode()) {
+                $operations->evenInMaintenanceMode();
+            }
+            $events[] = $operations;
         }
 
         return $this->registered[$schedule] = $events;

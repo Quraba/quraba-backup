@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Restore\Live;
 
+use Closure;
 use Illuminate\Contracts\Config\Repository;
 use Illuminate\Support\Str;
 use Psr\Log\LoggerInterface;
@@ -160,7 +161,7 @@ final readonly class LiveRestoreService
     /**
      * @return array<string, mixed> the restore report (`status`: completed, failed or indeterminate)
      */
-    public function run(string $runUuid, RestoreProfile $profile, LiveRestoreAuthorization $authorization): array
+    public function run(string $runUuid, RestoreProfile $profile, LiveRestoreAuthorization $authorization, ?Closure $onJournalCreated = null): array
     {
         $runUuid = Identifiers::assertUuid($runUuid, 'The restore source run UUID');
         $identity = $this->identities->current();
@@ -170,7 +171,7 @@ final readonly class LiveRestoreService
         $context = new LiveRestoreContext($runUuid, $profile, $authorization->cleanHost, $locks);
 
         try {
-            $this->execute($context, $identity);
+            $this->execute($context, $identity, $onJournalCreated);
         } catch (Throwable $exception) {
             $this->fail($context, $exception);
         } finally {
@@ -181,7 +182,7 @@ final readonly class LiveRestoreService
         return $context->report;
     }
 
-    private function execute(LiveRestoreContext $c, ApplicationIdentity $identity): void
+    private function execute(LiveRestoreContext $c, ApplicationIdentity $identity, ?Closure $onJournalCreated): void
     {
         $this->assertNoUnresolvedRestore();
 
@@ -212,11 +213,12 @@ final readonly class LiveRestoreService
             $c->profile,
             $workspace,
             $c->report,
-            function (string $stage, ?RestoreSource $source) use ($c, $identity, $restoreUuid): void {
+            function (string $stage, ?RestoreSource $source) use ($c, $identity, $restoreUuid, $onJournalCreated): void {
                 if ($stage === 'resolved' && $source !== null) {
                     $this->assertImmutableOrigin($source);
                     // The journal exists from the moment the exact source is frozen.
                     $c->journal = $this->journals->create(RestoreJournal::open($restoreUuid, $identity, $c->profile, $source, $c->cleanHost));
+                    $onJournalCreated?->__invoke($restoreUuid);
                     $c->report['journal'] = $this->journals->directory().'/'.$restoreUuid.'.json';
                     $c->audit?->freezeSource(
                         $c->profile === RestoreProfile::Media ? null : $source->archiveLocator,

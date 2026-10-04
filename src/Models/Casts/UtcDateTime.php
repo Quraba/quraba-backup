@@ -36,6 +36,13 @@ final class UtcDateTime implements CastsAttributes
             throw new InvalidArgumentException(sprintf('Unsupported stored timestamp for [%s].', $key));
         }
 
+        // Eloquent serializes its built-in created_at/updated_at dates to ISO
+        // before applying custom casts in Model::toArray(). Accept that
+        // intermediate form while retaining UTC for database values.
+        if (str_contains($value, 'T')) {
+            return CarbonImmutable::parse($value, 'UTC')->utc();
+        }
+
         // Tolerate fractional seconds some drivers return.
         $normalized = substr($value, 0, 19);
         $parsed = CarbonImmutable::createFromFormat(self::FORMAT, $normalized, 'UTC');

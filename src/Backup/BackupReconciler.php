@@ -18,6 +18,7 @@ use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Identity\ApplicationIdentity;
 use Quraba\Backup\Identity\IdentityResolver;
 use Quraba\Backup\Maintenance\MaintenanceReconciler;
+use Quraba\Backup\Manifest\RemoteManifestCatalog;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
@@ -60,6 +61,7 @@ final readonly class BackupReconciler
         private IdentityResolver $identities,
         private ApplicationArchiveService $archives,
         private MediaSnapshotService $media,
+        private RemoteManifestCatalog $manifestCatalog,
         private ResticRepository $repository,
         private RunFinalizer $finalizer,
         private MaintenanceReconciler $maintenance,
@@ -191,6 +193,14 @@ final readonly class BackupReconciler
         $kind = $run->profile === BackupProfile::Recovery ? SnapshotKind::RecoveryMedia : SnapshotKind::Media;
 
         try {
+            $manifest = $this->manifestCatalog->find($identity, $run->uuid);
+
+            if ($manifest !== null) {
+                $result = $this->media->adoptFromManifest($run, $artifact->refresh(), $kind, $manifest);
+
+                return ComponentOutcome::verified($result->snapshotId);
+            }
+
             $existing = $this->media->findRunSnapshot(SnapshotIdentity::for($identity, $kind, $run->uuid), $artifact);
 
             if ($existing === null) {

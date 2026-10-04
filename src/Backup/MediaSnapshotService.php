@@ -13,6 +13,7 @@ use Quraba\Backup\Exceptions\QurabaBackupException;
 use Quraba\Backup\Exceptions\RepositoryIdentityMismatch;
 use Quraba\Backup\Exceptions\ResticSnapshotFailed;
 use Quraba\Backup\Identity\IdentityResolver;
+use Quraba\Backup\Manifest\RemoteManifest;
 use Quraba\Backup\Media\MediaRoot;
 use Quraba\Backup\Media\MediaRootResolver;
 use Quraba\Backup\Models\BackupArtifact;
@@ -63,9 +64,7 @@ final readonly class MediaSnapshotService
      */
     public function snapshot(BackupRun $run, BackupArtifact $artifact, SnapshotKind $kind, bool $allowCreate = true): MediaSnapshotResult
     {
-        if ($artifact->kind !== ArtifactKind::ResticSnapshot || $artifact->backup_run_id !== $run->id) {
-            throw new IllegalStateTransition('The artifact does not belong to this run\'s media snapshot.');
-        }
+        $this->assertArtifact($run, $artifact);
 
         $roots = $this->roots->resolve();
         $repositoryId = $this->repositoryIdentity->verifyOpenRepository();
@@ -102,6 +101,55 @@ final readonly class MediaSnapshotService
         ]);
 
         return new MediaSnapshotResult($snapshot->id, $repositoryId, $adopted);
+    }
+
+    /**
+     * Reconciliation of a published run uses its immutable historical roots,
+     * never the paths configured on the host performing disaster recovery.
+     * No backup command is reachable from this adoption path.
+     */
+    public function adoptFromManifest(BackupRun $run, BackupArtifact $artifact, SnapshotKind $kind, RemoteManifest $manifest): MediaSnapshotResult
+    {
+        $this->assertArtifact($run, $artifact);
+        $currentIdentity = $this->identity->current();
+
+        if ($manifest->runUuid !== $run->uuid || $manifest->appId !== $currentIdentity->appId
+            || $manifest->environment !== $currentIdentity->environment || $manifest->profile !== $run->profile
+            || ! $manifest->hasVerifiedSnapshot() || $manifest->snapshotKind !== $kind->value
+            || $manifest->repositoryId === null) {
+            throw ResticSnapshotFailed::identityMismatch('the immutable manifest does not claim this run and snapshot kind');
+        }
+
+        $repositoryId = $this->repositoryIdentity->verifyOpenRepository();
+
+        if (! hash_equals($manifest->repositoryId, $repositoryId)) {
+            throw new RepositoryIdentityMismatch('The immutable manifest names a different Restic repository.');
+        }
+
+        $identity = SnapshotIdentity::for($currentIdentity, $kind, $run->uuid);
+        $existing = $this->findRunSnapshot($identity, $artifact);
+
+        if ($existing === null || $existing->id !== $manifest->snapshotId) {
+            throw ResticSnapshotFailed::identityMismatch('the immutable manifest snapshot ID differs from the unique physical snapshot of this run');
+        }
+
+        $roots = array_map(static fn (array $root): MediaRoot => new MediaRoot($root['name'], $root['path']), $manifest->snapshotRoots);
+        $snapshot = $this->prove($identity, $existing->id, $roots, $repositoryId, 'immutable manifest roots');
+
+        $run->mergeMetadata(['restic_repository_id' => $repositoryId]);
+
+        if ($artifact->currentStatus() !== ArtifactStatus::Verifying) {
+            $artifact->markVerifying();
+        }
+
+        $artifact->markVerifiedSnapshot($snapshot->id, [
+            'kind' => $kind->value,
+            'roots' => $manifest->snapshotRoots,
+            'repository_id' => $repositoryId,
+            'adopted' => true,
+        ]);
+
+        return new MediaSnapshotResult($snapshot->id, $repositoryId, adopted: true);
     }
 
     /**
@@ -174,7 +222,7 @@ final readonly class MediaSnapshotService
      *
      * @param  list<MediaRoot>  $roots
      */
-    private function prove(SnapshotIdentity $identity, string $snapshotId, array $roots, string $repositoryId): ResticSnapshot
+    private function prove(SnapshotIdentity $identity, string $snapshotId, array $roots, string $repositoryId, string $rootsDescription = 'configured media roots'): ResticSnapshot
     {
         // Exact ID only (Restic ignores tag filters next to IDs); the full
         // identity is checked below on the returned document.
@@ -190,7 +238,7 @@ final readonly class MediaSnapshotService
         sort($actualPaths);
 
         if ($expectedPaths !== $actualPaths) {
-            throw ResticSnapshotFailed::identityMismatch(sprintf('snapshot %s covers different paths than the configured media roots', $snapshotId));
+            throw ResticSnapshotFailed::identityMismatch(sprintf('snapshot %s covers different paths than the %s', $snapshotId, $rootsDescription));
         }
 
         $current = $this->repository->inspect();
@@ -200,6 +248,13 @@ final readonly class MediaSnapshotService
         }
 
         return $matches[0];
+    }
+
+    private function assertArtifact(BackupRun $run, BackupArtifact $artifact): void
+    {
+        if ($artifact->kind !== ArtifactKind::ResticSnapshot || $artifact->backup_run_id !== $run->id) {
+            throw new IllegalStateTransition('The artifact does not belong to this run\'s media snapshot.');
+        }
     }
 
     private function snapshotIdFrom(ResticResult $result): ?string

@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — v1.1.1
+## Unreleased — v1.1.2
+
+- Reconcile a verified historical Restic snapshot after cross-path disaster recovery using its
+  immutable remote manifest roots, while retaining strict current-root checks for new backups.
+
+## v1.1.1 — 2026-10-04
 
 - Recognize MariaDB dump tools by their probed `--version` provenance, including Windows
   `mysqldump.exe`, when assessing sequence coverage and exact database object completeness.

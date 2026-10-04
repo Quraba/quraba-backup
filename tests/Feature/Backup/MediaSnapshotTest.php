@@ -105,6 +105,28 @@ final class MediaSnapshotTest extends TestCase
         self::assertCount(1, $this->backupInvocations(), 'No second snapshot may be created for the same run.');
     }
 
+    public function test_new_backup_verification_still_rejects_a_snapshot_from_other_configured_roots(): void
+    {
+        [$run, $artifact] = $this->runningMediaRun();
+        $this->service()->snapshot($run, $artifact, SnapshotKind::Media);
+        BackupArtifact::query()->whereKey($artifact->id)->toBase()->update(['status' => 'creating', 'snapshot_id' => null, 'verified_at' => null]);
+
+        $pathB = $this->sandbox.'/another-media-root';
+        mkdir($pathB, 0700, true);
+        $this->config()->set('restic.media.roots', ['uploads' => ['path' => $pathB]]);
+        $this->refreshBackupServices();
+
+        try {
+            $this->service()->snapshot($run->refresh(), $artifact->refresh(), SnapshotKind::Media);
+            self::fail('A new backup must validate the snapshot against the current configured roots.');
+        } catch (ResticSnapshotFailed $exception) {
+            self::assertSame('restic.snapshot_identity_mismatch', $exception->failureCode());
+            self::assertStringContainsString('configured media roots', $exception->getMessage());
+        }
+
+        self::assertCount(1, $this->backupInvocations());
+    }
+
     public function test_duplicate_run_snapshots_are_refused_as_ambiguous(): void
     {
         [$run, $artifact] = $this->runningMediaRun();

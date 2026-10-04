@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Quraba\Backup\Tests\Feature\Backup;
 
 use Illuminate\Support\Facades\Artisan;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Quraba\Backup\Archive\ArchiveRequest;
 use Quraba\Backup\Archive\ArchiveStore;
 use Quraba\Backup\Archive\ArchiveVerifier;
@@ -15,6 +16,7 @@ use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Enums\MaintenanceOperation;
+use Quraba\Backup\Health\BackupHealthService;
 use Quraba\Backup\Identity\IdentityResolver;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupMaintenanceRun;
@@ -161,6 +163,167 @@ final class ReconciliationTest extends TestCase
         $manifestLocator = $run->artifacts()->where('kind', ArtifactKind::RemoteManifest->value)->value('locator');
         $manifest = json_decode((string) file_get_contents($this->bucketPath((string) $manifestLocator)), true);
         self::assertTrue($manifest['recovery_point']);
+    }
+
+    public function test_disaster_recovery_adopts_historical_roots_from_the_immutable_manifest(): void
+    {
+        [$run, $artifact, $manifestPath, $originalManifest, $pathA, $pathB] = $this->publishedRecoveryPointWithRestoredCatalog();
+        $snapshotId = $originalManifest['restic']['snapshot']['id'];
+
+        self::assertNotSame($pathA, $pathB);
+        self::assertSame(1, $this->backupCount());
+
+        $report = $this->reconciler()->reconcile();
+
+        self::assertSame(0, $report->unresolved());
+        self::assertSame(BackupStatus::Completed, $run->refresh()->status);
+        self::assertSame(ArtifactStatus::Verified, $run->artifacts()->where('kind', ArtifactKind::ApplicationArchive->value)->firstOrFail()->status);
+        self::assertSame(ArtifactStatus::Verified, $artifact->refresh()->status);
+        self::assertSame($snapshotId, $artifact->snapshot_id);
+        self::assertSame($originalManifest['restic']['snapshot']['roots'], $artifact->metadata['roots']);
+        self::assertSame($pathA, $artifact->metadata['roots'][0]['path']);
+        self::assertSame(1, $this->backupCount(), 'Reconciliation must never create another snapshot.');
+        self::assertSame($originalManifest, json_decode((string) file_get_contents($manifestPath), true), 'The immutable manifest must not change.');
+
+        $manifestArtifact = $run->artifacts()->where('kind', ArtifactKind::RemoteManifest->value)->firstOrFail();
+        self::assertSame(ArtifactStatus::Verified, $manifestArtifact->status, 'Finalization must adopt the identical manifest without collision.');
+        self::assertTrue($manifestArtifact->metadata['adopted']);
+        self::assertTrue($originalManifest['recovery_point']);
+
+        $health = $this->app->make(BackupHealthService::class)->check(sample: false)->toArray();
+        $recoveryPoint = array_values(array_filter($health['checks'], static fn (array $check): bool => $check['id'] === 'health.recovery_point'))[0];
+        $unresolved = array_values(array_filter($health['checks'], static fn (array $check): bool => $check['id'] === 'health.unresolved_runs'))[0];
+        self::assertSame('pass', $recoveryPoint['status']);
+        self::assertSame('pass', $unresolved['status']);
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function manifestConflicts(): iterable
+    {
+        foreach (['id', 'repository_id', 'kind', 'roots'] as $conflict) {
+            yield $conflict => [$conflict];
+        }
+    }
+
+    #[DataProvider('manifestConflicts')]
+    public function test_conflicting_immutable_manifest_snapshot_evidence_remains_indeterminate(string $conflict): void
+    {
+        [$run, , $manifestPath, $manifest] = $this->publishedRecoveryPointWithRestoredCatalog();
+
+        switch ($conflict) {
+            case 'id':
+                $manifest['restic']['snapshot']['id'] = str_repeat('f', 64);
+                break;
+            case 'repository_id':
+                $manifest['restic']['repository_id'] = str_repeat('e', 64);
+                break;
+            case 'kind':
+                $manifest['restic']['snapshot']['kind'] = 'media';
+                break;
+            case 'roots':
+                $manifest['restic']['snapshot']['roots'][0]['path'] = str_replace('\\', '/', $this->sandbox.'/wrong-root');
+                break;
+        }
+        file_put_contents($manifestPath, json_encode($manifest));
+
+        $report = $this->reconciler()->reconcile();
+
+        self::assertSame(1, $report->unresolved(), $conflict);
+        self::assertSame(BackupStatus::Indeterminate, $run->refresh()->status, $conflict);
+        self::assertSame(1, $this->backupCount(), $conflict);
+    }
+
+    public function test_immutable_manifest_cannot_select_among_ambiguous_physical_snapshots(): void
+    {
+        [$run] = $this->publishedRecoveryPointWithRestoredCatalog();
+        $snapshotsPath = dirname($this->fakeRestic).'/snapshots.json';
+        $snapshots = json_decode((string) file_get_contents($snapshotsPath), true);
+        $duplicate = $snapshots[0];
+        $duplicate['id'] = str_repeat('1', 64);
+        $snapshots[] = $duplicate;
+        file_put_contents($snapshotsPath, json_encode($snapshots));
+
+        $report = $this->reconciler()->reconcile();
+
+        self::assertSame(1, $report->unresolved());
+        self::assertSame(BackupStatus::Indeterminate, $run->refresh()->status);
+        self::assertSame('restic.snapshot_ambiguous', $run->failure_code);
+        self::assertSame(1, $this->backupCount());
+    }
+
+    public function test_immutable_manifest_cannot_adopt_a_recorded_incomplete_snapshot(): void
+    {
+        [$run, $artifact, , $manifest] = $this->publishedRecoveryPointWithRestoredCatalog();
+        $artifact->mergeMetadata(['incomplete_snapshot_id' => $manifest['restic']['snapshot']['id']]);
+
+        $report = $this->reconciler()->reconcile();
+
+        self::assertSame(1, $report->unresolved());
+        self::assertSame(BackupStatus::Indeterminate, $run->refresh()->status);
+        self::assertSame('restic.snapshot_incomplete', $run->failure_code);
+        self::assertSame(1, $this->backupCount());
+    }
+
+    public function test_missing_physical_snapshot_with_a_verified_manifest_remains_indeterminate(): void
+    {
+        [$run] = $this->publishedRecoveryPointWithRestoredCatalog();
+        file_put_contents(dirname($this->fakeRestic).'/snapshots.json', '[]');
+
+        $report = $this->reconciler()->reconcile();
+
+        self::assertSame(1, $report->unresolved());
+        self::assertSame(BackupStatus::Indeterminate, $run->refresh()->status);
+        self::assertSame('restic.snapshot_identity_mismatch', $run->failure_code);
+        self::assertSame(1, $this->backupCount());
+    }
+
+    /**
+     * @return array{BackupRun, BackupArtifact, string, array<string, mixed>, string, string}
+     */
+    private function publishedRecoveryPointWithRestoredCatalog(): array
+    {
+        $pathA = str_replace('\\', '/', $this->mediaRoot);
+        $run = $this->manager()->run(BackupProfile::Recovery)->run;
+        self::assertSame(BackupStatus::Completed, $run->status);
+
+        $archive = $run->artifacts()->where('kind', ArtifactKind::ApplicationArchive->value)->firstOrFail();
+        $snapshot = $run->artifacts()->where('kind', ArtifactKind::ResticSnapshot->value)->firstOrFail();
+        $manifestArtifact = $run->artifacts()->where('kind', ArtifactKind::RemoteManifest->value)->firstOrFail();
+        $manifestPath = $this->bucketPath((string) $manifestArtifact->locator);
+        $manifest = json_decode((string) file_get_contents($manifestPath), true);
+        self::assertSame($pathA, $manifest['restic']['snapshot']['roots'][0]['path']);
+
+        // The application archive captured an earlier catalog state. Its
+        // restored row has not learned the final remote artifacts yet.
+        $runMetadata = $run->metadata;
+        unset($runMetadata['restic_repository_id']);
+        BackupRun::query()->whereKey($run->id)->toBase()->update([
+            'status' => BackupStatus::Running->value,
+            'completed_at' => null,
+            'metadata' => json_encode($runMetadata),
+        ]);
+        BackupArtifact::query()->whereKey($archive->id)->toBase()->update([
+            'status' => ArtifactStatus::Creating->value,
+            'locator' => null,
+            'sha256' => null,
+            'byte_size' => null,
+            'verified_at' => null,
+            'metadata' => '{}',
+        ]);
+        BackupArtifact::query()->whereKey($snapshot->id)->toBase()->update([
+            'status' => ArtifactStatus::Creating->value,
+            'snapshot_id' => null,
+            'verified_at' => null,
+            'metadata' => '{}',
+        ]);
+        BackupArtifact::query()->whereKey($manifestArtifact->id)->delete();
+
+        $pathB = str_replace('\\', '/', $this->sandbox.'/restored-media');
+        mkdir($pathB, 0700, true);
+        $this->config()->set('restic.media.roots', ['uploads' => ['path' => $pathB]]);
+        $this->refreshBackupServices();
+
+        return [$run->refresh(), $snapshot->refresh(), $manifestPath, $manifest, $pathA, $pathB];
     }
 
     public function test_ambiguous_snapshots_keep_the_run_indeterminate(): void

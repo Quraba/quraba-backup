@@ -1,6 +1,7 @@
 <x-filament-panels::page>
+    @include('quraba-backup::filament.partials.styles')
     @php($ui = \Quraba\Backup\Filament\Ui::class)
-    <div class="space-y-5">
+    <div class="qb-ui space-y-5">
         @if (! $operationsAvailable || ! $catalogAvailable || ! $maintenanceAvailable)
             <x-filament::section :heading="$ui::text('sections.panel_history')">
                 <p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.migrations') }}</p>

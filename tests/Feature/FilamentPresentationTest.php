@@ -116,6 +116,11 @@ final class FilamentPresentationTest extends TestCase
         self::assertSame('مكتمل', Ui::value('completed'));
         self::assertSame('لم يُشغَّل بعد', Ui::text('empty_states.never_run'));
         self::assertSame('غير مضبوط', Ui::value('missing'));
+        self::assertSame('تفعيل جداول النسخ', Ui::value('enabled', 'schedule'));
+        self::assertSame('أسبوعياً يوم الأحد عند 03:30', Ui::scheduleSetting(['enabled' => true, 'frequency' => 'weekly', 'day' => 0, 'time' => '03:30']));
+
+        $this->app->setLocale('en');
+        self::assertSame('Weekly on Sunday at 03:30', Ui::scheduleSetting(['enabled' => true, 'frequency' => 'weekly', 'day' => 0, 'time' => '03:30']));
     }
 
     public function test_arabic_and_english_package_keys_have_matching_structure(): void

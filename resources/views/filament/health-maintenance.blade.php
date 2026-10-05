@@ -1,6 +1,7 @@
 <x-filament-panels::page>
+    @include('quraba-backup::filament.partials.styles')
     @php($ui = \Quraba\Backup\Filament\Ui::class)
-    <div class="space-y-5">
+    <div class="qb-ui space-y-5">
         @if (! $operationsAvailable || ! $maintenanceAvailable)
             <x-filament::section :heading="$ui::text('sections.panel_history')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.migrations') }}</p></x-filament::section>
         @endif
@@ -12,7 +13,7 @@
             <div class="grid gap-4 md:grid-cols-2">
                 @foreach (['health_refresh', 'doctor', 'restic_check', 'retention_plan'] as $type)
                     @php($operation = $latest[$type] ?? null)
-                    <div class="rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                    <x-filament::section secondary compact>
                         <div class="flex flex-wrap items-center justify-between gap-2 text-sm font-medium"><span>{{ $ui::value($type, 'operations') }}</span><x-filament::badge :color="match ($operation?->status?->value) { 'completed' => 'success', 'failed', 'interrupted', 'indeterminate' => 'danger', 'pending', 'claimed', 'running' => 'warning', default => 'gray' }">{{ $operation ? $ui::value($operation->status) : $ui::text('empty_states.never_run') }}</x-filament::badge></div>
                         <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('pages.health.checked') }}: <bdi>{{ $operation?->finished_at?->toDateTimeString() ?? $ui::text('empty_states.not_checked') }}</bdi></p>
                         @if ($operation?->failure_message)<p class="mt-2 text-sm text-danger-600 dark:text-danger-400">{{ $operation->failure_message }}</p>@endif
@@ -30,7 +31,7 @@
                                 @endforeach
                             </div>
                         @endif
-                    </div>
+                    </x-filament::section>
                 @endforeach
             </div>
         </x-filament::section>
@@ -42,7 +43,7 @@
                     @if ($pendingEnabled)<p class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.last_seen') }}: <bdi>{{ $workerObserved ?? $ui::text('empty_states.never_run') }}</bdi></p>@endif
                     @if ($scheduleError)<p class="text-danger-600 dark:text-danger-400">{{ $scheduleError }}</p>@endif
                     @foreach ($schedule as $key => $setting)
-                        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 dark:border-gray-800"><span>{{ $ui::value($key, 'schedule') }}</span><span><bdi>{{ is_array($setting['value']) ? (($setting['value']['enabled'] ?? false) ? $ui::value($setting['value']['frequency'] ?? null, 'schedule').' '.($setting['value']['time'] ?? '') : $ui::value('disabled')) : (is_bool($setting['value']) ? $ui::value($setting['value'] ? 'enabled' : 'disabled') : ($setting['value'] ?? $ui::text('schedule.application_default'))) }}</bdi> <x-filament::badge color="gray">{{ $ui::value($setting['source'], 'schedule.source') }}</x-filament::badge></span></div>
+                        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 dark:border-gray-800"><span>{{ $ui::value($key, 'schedule') }}</span><span><bdi>{{ is_array($setting['value']) ? $ui::scheduleSetting($setting['value']) : (is_bool($setting['value']) ? $ui::value($setting['value'] ? 'enabled' : 'disabled') : ($setting['value'] ?? $ui::text('schedule.application_default'))) }}</bdi> <x-filament::badge color="gray">{{ $ui::value($setting['source'], 'schedule.source') }}</x-filament::badge></span></div>
                     @endforeach
                 </div>
             </x-filament::section>

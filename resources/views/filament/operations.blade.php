@@ -1,6 +1,7 @@
 <x-filament-panels::page>
+    @include('quraba-backup::filament.partials.styles')
     @php($ui = \Quraba\Backup\Filament\Ui::class)
-    <div class="space-y-5">
+    <div class="qb-ui space-y-5">
         <div class="grid gap-5 lg:grid-cols-2">
             @if ($canDryRestore)
                 <x-filament::section :heading="$ui::text('pages.operations.dry')" :description="$ui::text('pages.operations.dry_help')">

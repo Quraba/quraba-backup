@@ -185,6 +185,7 @@ final class QurabaBackupServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'quraba-backup');
+        $this->loadTranslationsFrom(__DIR__.'/../resources/lang', 'quraba-backup');
         // Registered whenever the scheduler is resolved (schedule:run,
         // schedule:list); BackupScheduler guards against duplicates.
         // A misconfigured package schedule is logged (and reported by the

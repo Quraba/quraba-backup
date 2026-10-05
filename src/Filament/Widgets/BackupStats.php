@@ -10,12 +10,15 @@ use Quraba\Backup\Enums\ArtifactKind;
 use Quraba\Backup\Enums\ArtifactStatus;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
+use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupArtifact;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Operations\PanelTableAvailability;
 
 final class BackupStats extends StatsOverviewWidget
 {
+    protected int|array|null $columns = ['default' => 1, 'md' => 2, 'xl' => 4];
+
     protected function getStats(): array
     {
         $tables = app(PanelTableAvailability::class);
@@ -31,10 +34,10 @@ final class BackupStats extends StatsOverviewWidget
         $latest = BackupRun::query()->where('status', BackupStatus::Completed->value)->latest('completed_at')->first();
 
         return [
-            $this->stat('Complete Recovery Point', $recovery),
-            $this->stat('Database backup', $database),
-            $this->stat('Media snapshot', $media),
-            $this->stat('Last successful backup', $latest),
+            $this->stat(Ui::text('last_successful'), $latest),
+            $this->stat(Ui::text('labels.snapshot'), $media),
+            $this->stat(Ui::text('actions.database_backup'), $database),
+            $this->stat(Ui::text('actions.recovery_backup'), $recovery),
         ];
     }
 
@@ -44,8 +47,8 @@ final class BackupStats extends StatsOverviewWidget
         $configuredTimezone = config('app.timezone', 'UTC');
         $timezone = is_string($configuredTimezone) ? $configuredTimezone : 'UTC';
 
-        return Stat::make($label, $time?->setTimezone($timezone)->format('M j, Y H:i') ?? 'None')
-            ->description($time === null ? 'No verified backup' : $time->diffForHumans().' · '.$timezone)
+        return Stat::make($label, $time?->setTimezone($timezone)->translatedFormat('j M Y H:i') ?? Ui::text('empty_states.none'))
+            ->description($time === null ? Ui::text('empty_states.no_backup') : $time->diffForHumans().' · '.$timezone)
             ->color($time === null ? 'warning' : 'success');
     }
 }

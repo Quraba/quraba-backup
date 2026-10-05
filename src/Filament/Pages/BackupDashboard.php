@@ -8,6 +8,7 @@ use Filament\Pages\Page;
 use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Filament\Widgets\BackupStats;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\BackupRun;
@@ -23,7 +24,22 @@ final class BackupDashboard extends Page
 {
     protected string $view = 'quraba-backup::filament.dashboard';
 
-    protected static ?string $navigationLabel = 'Backup Dashboard';
+    protected static ?int $navigationSort = 1;
+
+    public static function getNavigationLabel(): string
+    {
+        return Ui::text('navigation.dashboard');
+    }
+
+    public static function getNavigationGroup(): string
+    {
+        return Ui::text('navigation.group');
+    }
+
+    public function getTitle(): string
+    {
+        return Ui::text('navigation.dashboard');
+    }
 
     protected function getHeaderWidgets(): array
     {

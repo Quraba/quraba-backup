@@ -7,6 +7,7 @@ namespace Quraba\Backup\Filament\Pages;
 use Filament\Pages\Page;
 use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Restore\RestoreDryRunService;
 use Quraba\Backup\Retention\RetentionExecutor;
@@ -17,7 +18,22 @@ final class BackupOperations extends Page
 {
     protected string $view = 'quraba-backup::filament.operations';
 
-    protected static ?string $navigationLabel = 'Recovery operations';
+    protected static ?int $navigationSort = 5;
+
+    public static function getNavigationLabel(): string
+    {
+        return Ui::text('navigation.operations');
+    }
+
+    public static function getNavigationGroup(): string
+    {
+        return Ui::text('navigation.group');
+    }
+
+    public function getTitle(): string
+    {
+        return Ui::text('pages.operations.title');
+    }
 
     public string $restoreRunUuid = '';
 
@@ -69,10 +85,10 @@ final class BackupOperations extends Page
             'canDryRestore' => BackupPanelAccess::allows('dry-restore'),
             'canPlanRetention' => BackupPanelAccess::allows('plan-retention'),
             'secretState' => [
-                'B2 key ID' => filled(config('quraba-backup.storage.b2.key_id')),
-                'B2 application key' => filled(config('quraba-backup.storage.b2.application_key')),
-                'Archive password' => filled(config('quraba-backup.archive.password')),
-                'Restic password' => filled(config('restic.password')) || filled(config('restic.password_file')),
+                Ui::text('configuration.b2_key_id') => filled(config('quraba-backup.storage.b2.key_id')),
+                Ui::text('configuration.b2_application_key') => filled(config('quraba-backup.storage.b2.application_key')),
+                Ui::text('configuration.archive_password') => filled(config('quraba-backup.archive.password')),
+                Ui::text('configuration.restic_password') => filled(config('restic.password')) || filled(config('restic.password_file')),
             ],
         ];
     }

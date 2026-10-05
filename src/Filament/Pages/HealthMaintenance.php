@@ -6,6 +6,7 @@ namespace Quraba\Backup\Filament\Pages;
 
 use DateTimeZone;
 use Filament\Actions\Action;
+use Filament\Actions\ActionGroup;
 use Filament\Facades\Filament;
 use Filament\Forms\Components\Checkbox;
 use Filament\Forms\Components\Select;
@@ -22,6 +23,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\PendingOperation;
 use Quraba\Backup\Operations\PanelTableAvailability;
@@ -37,7 +39,22 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
 
     protected string $view = 'quraba-backup::filament.health-maintenance';
 
-    protected static ?string $navigationLabel = 'Health & Maintenance';
+    protected static ?int $navigationSort = 4;
+
+    public static function getNavigationLabel(): string
+    {
+        return Ui::text('navigation.health');
+    }
+
+    public static function getNavigationGroup(): string
+    {
+        return Ui::text('navigation.group');
+    }
+
+    public function getTitle(): string
+    {
+        return Ui::text('pages.health.title');
+    }
 
     public static function canAccess(): bool
     {
@@ -46,19 +63,20 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
 
     protected function getHeaderActions(): array
     {
-        $requests = [];
-        foreach ([[PendingOperationType::HealthRefresh, 'Refresh health'], [PendingOperationType::Doctor, 'Run Doctor'], [PendingOperationType::ResticCheck, 'Check repository'], [PendingOperationType::RetentionPlan, 'Plan retention']] as [$type, $label]) {
-            $requests[] = Action::make($type->value)->label($label)
+        $checks = [];
+        foreach ([[PendingOperationType::HealthRefresh, 'actions.refresh_health'], [PendingOperationType::Doctor, 'actions.doctor'], [PendingOperationType::ResticCheck, 'actions.check_repository'], [PendingOperationType::RetentionPlan, 'actions.plan_retention']] as [$type, $label]) {
+            $checks[] = Action::make($type->value)->label(Ui::text($label))
                 ->visible(fn (): bool => BackupPanelAccess::allows($type->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->requiresConfirmation()
                 ->action(fn () => $this->request($type));
         }
-        $requests[] = Action::make('configure_schedule')->label('Edit schedules')
+        $schedules = [];
+        $schedules[] = Action::make('configure_schedule')->label(Ui::text('actions.edit_schedules'))
             ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule') && app(PanelTableAvailability::class)->has('settings'))
             ->fillForm(fn (): array => $this->scheduleFormValues())
             ->schema($this->scheduleFields())
             ->action(fn (array $data) => $this->saveSchedule($data));
-        $requests[] = Action::make('reset_schedule')->label('Reset schedule defaults')->color('warning')
+        $schedules[] = Action::make('reset_schedule')->label(Ui::text('actions.reset_schedules'))->color('warning')
             ->visible(fn (): bool => BackupPanelAccess::allows('configure-schedule') && app(PanelTableAvailability::class)->has('settings'))
             ->requiresConfirmation()
             ->action(function (): void {
@@ -66,10 +84,13 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
                 foreach (ScheduleSettings::keys() as $key) {
                     app(ScheduleSettings::class)->reset($key);
                 }
-                Notification::make()->title('Schedule overrides removed')->success()->send();
+                Notification::make()->title(Ui::text('pages.health.schedule_reset'))->success()->send();
             });
 
-        return $requests;
+        return [
+            ActionGroup::make($checks)->label(Ui::text('pages.health.diagnostics'))->button(),
+            ActionGroup::make($schedules)->label(Ui::text('actions.edit_schedules'))->button()->color('gray'),
+        ];
     }
 
     public function table(Table $table): Table
@@ -78,13 +99,13 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
 
         return $table->query(BackupMaintenanceRun::query()->latest('id'))
             ->columns([
-                TextColumn::make('created_at')->label('Created')->dateTime()->sortable(),
-                TextColumn::make('operation')->badge(),
-                TextColumn::make('status')->badge()->color(fn (BackupMaintenanceRun $record): string => match ($record->status->value) {
+                TextColumn::make('created_at')->label(Ui::text('labels.created'))->dateTime()->sortable(),
+                TextColumn::make('operation')->label(Ui::text('labels.operation'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'maintenance_operations')),
+                TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupMaintenanceRun $record): string => match ($record->status->value) {
                     'completed' => 'success', 'failed', 'indeterminate' => 'danger', default => 'warning'
                 }),
-                IconColumn::make('dry_run')->label('Read only')->boolean(),
-                TextColumn::make('uuid')->toggleable(isToggledHiddenByDefault: true),
+                IconColumn::make('dry_run')->label(Ui::text('labels.read_only'))->boolean(),
+                TextColumn::make('uuid')->label(Ui::text('labels.uuid'))->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultPaginationPageOption(20);
     }
@@ -127,10 +148,10 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             'maintenanceAvailable' => $tables->has('maintenance'),
             'unresolved' => $unresolved,
             'secrets' => [
-                'B2 key ID' => filled(config('quraba-backup.storage.b2.key_id')),
-                'B2 application key' => filled(config('quraba-backup.storage.b2.application_key')),
-                'Archive password' => filled(config('quraba-backup.archive.password')),
-                'Restic password file' => filled(config('restic.password_file')),
+                Ui::text('configuration.b2_key_id') => filled(config('quraba-backup.storage.b2.key_id')),
+                Ui::text('configuration.b2_application_key') => filled(config('quraba-backup.storage.b2.application_key')),
+                Ui::text('configuration.archive_password') => filled(config('quraba-backup.archive.password')),
+                Ui::text('configuration.restic_password_file') => filled(config('restic.password_file')),
             ],
         ];
     }
@@ -142,9 +163,9 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             $actor = Filament::auth()->user();
             abort_unless($actor instanceof Authenticatable, 403);
             $operation = app(PendingOperationRequest::class)->submit($type, $actor);
-            Notification::make()->title('Check requested')->body('Operation '.$operation->uuid.' is queued.')->success()->send();
+            Notification::make()->title(Ui::text('pages.health.check_requested'))->body(Ui::text('pages.health.check_queued', ['uuid' => $operation->uuid]))->success()->send();
         } catch (Throwable $exception) {
-            Notification::make()->title('Request refused')->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
+            Notification::make()->title(Ui::text('pages.health.request_refused'))->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
         }
     }
 
@@ -152,15 +173,15 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
     private function scheduleFields(): array
     {
         $fields = [
-            Checkbox::make('enabled')->label('Enable backup schedules'),
-            Select::make('timezone')->label('Schedule timezone')->options(array_combine(DateTimeZone::listIdentifiers(), DateTimeZone::listIdentifiers()))->searchable()->placeholder('Application timezone'),
+            Checkbox::make('enabled')->label(Ui::text('schedule.enable')),
+            Select::make('timezone')->label(Ui::text('schedule.timezone'))->options(array_combine(DateTimeZone::listIdentifiers(), DateTimeZone::listIdentifiers()))->searchable()->placeholder(Ui::text('schedule.application_timezone')),
         ];
         foreach (['database', 'media', 'recovery'] as $profile) {
-            $fields[] = Section::make(ucfirst($profile).' backup')->columns(2)->schema([
-                Checkbox::make($profile.'_enabled')->label('Enabled'),
-                Select::make($profile.'_frequency')->label('Frequency')->options(['daily' => 'Daily', 'weekly' => 'Weekly', 'monthly' => 'Monthly'])->required(),
-                TextInput::make($profile.'_day')->label('Day')->numeric()->helperText('Weekly: 0=Sunday to 6=Saturday. Monthly: 1–28. Leave blank for daily.'),
-                TextInput::make($profile.'_time')->label('Time (HH:MM)')->required()->helperText('Use a 5-minute boundary, such as 02:05.'),
+            $fields[] = Section::make(Ui::text('schedule.'.$profile))->columns(2)->schema([
+                Checkbox::make($profile.'_enabled')->label(Ui::text('statuses.enabled')),
+                Select::make($profile.'_frequency')->label(Ui::text('schedule.frequency'))->options(['daily' => Ui::text('schedule.daily'), 'weekly' => Ui::text('schedule.weekly'), 'monthly' => Ui::text('schedule.monthly')])->required(),
+                TextInput::make($profile.'_day')->label(Ui::text('schedule.day'))->numeric()->helperText(Ui::text('schedule.day_help')),
+                TextInput::make($profile.'_time')->label(Ui::text('schedule.time'))->required()->helperText(Ui::text('schedule.time_help')),
             ]);
         }
 
@@ -175,7 +196,7 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
         foreach (['database', 'media', 'recovery'] as $profile) {
             $setting = $values[$profile]['value'];
             if (! is_array($setting)) {
-                throw new \RuntimeException('The schedule profile is invalid.');
+                throw new \RuntimeException(Ui::text('form_errors.schedule_invalid'));
             }
             foreach (['enabled', 'frequency', 'day', 'time'] as $field) {
                 $form[$profile.'_'.$field] = $setting[$field] ?? null;
@@ -200,9 +221,9 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
                 ];
             }
             app(ScheduleSettings::class)->saveAll($values);
-            Notification::make()->title('Schedules updated')->body('The next scheduler invocation will use these overrides.')->success()->send();
+            Notification::make()->title(Ui::text('pages.health.schedule_updated'))->body(Ui::text('pages.health.schedule_updated_help'))->success()->send();
         } catch (Throwable $exception) {
-            Notification::make()->title('Schedule update refused')->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
+            Notification::make()->title(Ui::text('pages.health.schedule_refused'))->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
         }
     }
 }

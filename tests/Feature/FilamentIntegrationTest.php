@@ -40,12 +40,13 @@ final class FilamentIntegrationTest extends TestCase
 
     public function test_all_panel_views_compile(): void
     {
-        foreach (['dashboard', 'runs', 'restore', 'health-maintenance'] as $view) {
+        foreach (['dashboard', 'runs', 'restore', 'health-maintenance', 'operations'] as $view) {
             $source = file_get_contents(__DIR__.'/../../resources/views/filament/'.$view.'.blade.php');
             self::assertIsString($source);
             $source = str_replace(['<x-filament-panels::page>', '</x-filament-panels::page>'], ['<div>', '</div>'], $source);
-            $source = preg_replace('/<x-filament::(?:section|badge)(?:\s[^>]*)?>/', '<div>', $source);
-            $source = preg_replace('/<\/x-filament::(?:section|badge)>/', '</div>', (string) $source);
+            $source = preg_replace('/<x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?\s*\/>/', '<div></div>', $source);
+            $source = preg_replace('/<x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?>/', '<div>', (string) $source);
+            $source = preg_replace('/<\/x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)>/', '</div>', (string) $source);
             self::assertNotSame('', Blade::compileString((string) $source));
         }
     }

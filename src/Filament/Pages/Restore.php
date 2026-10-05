@@ -28,9 +28,9 @@ use Quraba\Backup\Enums\ArtifactStatus;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\PendingOperationType;
-use Quraba\Backup\Enums\RestoreMode;
 use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Media\MediaRootResolver;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\PendingOperation;
@@ -49,7 +49,22 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
     protected string $view = 'quraba-backup::filament.restore';
 
-    protected static ?string $navigationLabel = 'Restore';
+    protected static ?int $navigationSort = 3;
+
+    public static function getNavigationLabel(): string
+    {
+        return Ui::text('navigation.restore');
+    }
+
+    public static function getNavigationGroup(): string
+    {
+        return Ui::text('navigation.group');
+    }
+
+    public function getTitle(): string
+    {
+        return Ui::text('pages.restore.title');
+    }
 
     public static function canAccess(): bool
     {
@@ -59,30 +74,30 @@ final class Restore extends Page implements Tables\Contracts\HasTable
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('dry_restore')->label('Prepare dry restore')->visible(fn (): bool => BackupPanelAccess::allows('dry-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
+            Action::make('dry_restore')->label(Ui::text('pages.restore.dry_action'))->visible(fn (): bool => BackupPanelAccess::allows('dry-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->schema($this->sourceFields())
                 ->action(fn (array $data) => $this->submit(PendingOperationType::DryRestore, $data)),
-            Action::make('live_restore')->label('Request live restore')->color('danger')
+            Action::make('live_restore')->label(Ui::text('pages.restore.live_action'))->color('danger')
                 ->visible(fn (): bool => BackupPanelAccess::allows('live-restore') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && (bool) config('quraba-backup.filament.live_restore_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->schema([
                     Wizard::make([
-                        Step::make('Exact source')->schema($this->sourceFields()),
-                        Step::make('Impact')->schema([
-                            Placeholder::make('impact')->content(fn (Get $get): string => $this->impactSummary($get)),
-                            Placeholder::make('maintenance')->content('A verified safety backup is taken before replacement. The application remains in maintenance mode afterwards; use CLI to verify and bring it up.'),
+                        Step::make(Ui::text('pages.restore.source_step'))->schema($this->sourceFields()),
+                        Step::make(Ui::text('pages.restore.impact_step'))->schema([
+                            Placeholder::make('impact')->label(Ui::text('pages.restore.impact_step'))->content(fn (Get $get): string => $this->impactSummary($get)),
+                            Placeholder::make('maintenance')->label(Ui::text('labels.safety_backup'))->content(Ui::text('pages.restore.safety_notice')),
                         ]),
-                        Step::make('Dry restore guidance')->schema([
-                            Placeholder::make('dry_guidance')->content(fn (Get $get): string => $this->dryGuidance($get)),
+                        Step::make(Ui::text('pages.restore.dry_step'))->schema([
+                            Placeholder::make('dry_guidance')->label(Ui::text('pages.restore.dry_step'))->content(fn (Get $get): string => $this->dryGuidance($get)),
                         ]),
-                        Step::make('Warnings and blockers')->schema([
-                            Placeholder::make('warnings')->content(fn (Get $get): string => $this->warningsSummary($get)),
+                        Step::make(Ui::text('pages.restore.warnings_step'))->schema([
+                            Placeholder::make('warnings')->label(Ui::text('pages.restore.warnings_step'))->content(fn (Get $get): string => $this->warningsSummary($get)),
                         ]),
-                        Step::make('Acknowledgements')->schema([
-                            Checkbox::make('acknowledge_replacement')->label('I understand that live data will be replaced')->required()->accepted(),
-                            Checkbox::make('acknowledge_maintenance')->label('I will verify the restored application and complete CLI follow-up before bringing it up')->required()->accepted(),
+                        Step::make(Ui::text('pages.restore.ack_step'))->schema([
+                            Checkbox::make('acknowledge_replacement')->label(Ui::text('pages.restore.ack_replacement'))->required()->accepted(),
+                            Checkbox::make('acknowledge_maintenance')->label(Ui::text('pages.restore.ack_maintenance'))->required()->accepted(),
                         ]),
-                        Step::make('Exact confirmation')->schema([
-                            TextInput::make('confirmation')->label('Type '.LiveRestoreAuthorization::phrase(app(Repository::class)).' exactly')->required()->autocomplete('off'),
+                        Step::make(Ui::text('pages.restore.confirm_step'))->schema([
+                            TextInput::make('confirmation')->label(Ui::text('pages.restore.type_exactly', ['phrase' => LiveRestoreAuthorization::phrase(app(Repository::class))]))->required()->autocomplete('off'),
                         ]),
                     ]),
                 ])
@@ -95,7 +110,7 @@ final class Restore extends Page implements Tables\Contracts\HasTable
     private function sourceFields(): array
     {
         return [
-            Select::make('known_source_run_uuid')->label('Known recovery point')->searchable()->preload()->required(fn (Get $get): bool => blank($get('manual_source_run_uuid')))
+            Select::make('known_source_run_uuid')->label(Ui::text('pages.restore.known_source'))->searchable()->preload()->required(fn (Get $get): bool => blank($get('manual_source_run_uuid')))
                 ->options(fn (): array => $this->catalogAvailable() ? $this->eligibleSourceQuery()->latest('requested_at')->limit(30)->get()->mapWithKeys(fn (BackupRun $run): array => [$run->uuid => $this->sourceLabel($run)])->all() : [])
                 ->getSearchResultsUsing(fn (string $search): array => $this->catalogAvailable() ? $this->eligibleSourceQuery()->where('uuid', 'like', '%'.$search.'%')->latest('requested_at')->limit(30)->get()->mapWithKeys(fn (BackupRun $run): array => [$run->uuid => $this->sourceLabel($run)])->all() : [])
                 ->getOptionLabelUsing(function (string $value): ?string {
@@ -103,9 +118,9 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
                     return $run instanceof BackupRun ? $this->sourceLabel($run) : null;
                 })
-                ->live()->helperText('Browse recent verified full Recovery Points or search by UUID. No source is selected automatically.'),
-            TextInput::make('manual_source_run_uuid')->label('Manual exact UUID (advanced)')->uuid()->required(fn (Get $get): bool => blank($get('known_source_run_uuid')))->live(onBlur: true)->helperText('Use only when the local catalog is missing a recoverable immutable remote manifest. Leave the selector empty.'),
-            Select::make('restore_profile')->label('Restore scope')->options(['database' => 'Database', 'media' => 'Media', 'full' => 'Full'])->required()->default('full')->live(),
+                ->live()->helperText(Ui::text('pages.restore.known_source_help')),
+            TextInput::make('manual_source_run_uuid')->label(Ui::text('pages.restore.manual_source'))->uuid()->required(fn (Get $get): bool => blank($get('known_source_run_uuid')))->live(onBlur: true)->helperText(Ui::text('pages.restore.manual_source_help')),
+            Select::make('restore_profile')->label(Ui::text('pages.restore.scope'))->options(['database' => Ui::text('profiles.database'), 'media' => Ui::text('profiles.media'), 'full' => Ui::text('profiles.full')])->required()->default('full')->live(),
         ];
     }
 
@@ -115,23 +130,23 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
         return $table->query(RestoreRun::query()->latest('id'))
             ->columns([
-                TextColumn::make('created_at')->label('Started')->dateTime()->sortable(),
-                TextColumn::make('mode')->badge()->formatStateUsing(fn ($state): string => $state instanceof RestoreMode ? ($state === RestoreMode::DryRun ? 'Dry restore' : 'Live restore') : (is_string($state) ? $state : 'Unknown')),
-                TextColumn::make('profile')->badge(),
-                TextColumn::make('status')->badge()->color(fn (RestoreRun $record): string => match ($record->status->value) {
+                TextColumn::make('created_at')->label(Ui::text('labels.started'))->dateTime()->sortable(),
+                TextColumn::make('mode')->label(Ui::text('labels.operation'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'modes')),
+                TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'profiles')),
+                TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (RestoreRun $record): string => match ($record->status->value) {
                     'completed' => 'success', 'failed', 'indeterminate', 'abandoned' => 'danger', default => 'warning'
                 }),
-                TextColumn::make('source_run_uuid')->label('Source')->copyable()->toggleable(),
-                TextColumn::make('completed_at')->label('Completed')->dateTime()->toggleable(),
-                TextColumn::make('destructive_started_at')->label('Boundary crossed')->formatStateUsing(fn ($state): string => $state === null ? 'No' : 'Yes'),
-                TextColumn::make('pre_change_run_uuid')->label('Safety backup')->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('journal_phase')->label('Journal state')->state(function (RestoreRun $record): string {
+                TextColumn::make('source_run_uuid')->label(Ui::text('labels.source'))->copyable()->toggleable(),
+                TextColumn::make('completed_at')->label(Ui::text('labels.completed_at'))->dateTime()->toggleable(),
+                TextColumn::make('destructive_started_at')->label(Ui::text('labels.boundary'))->badge()->state(fn (RestoreRun $record): string => $record->destructive_started_at === null ? 'not_crossed' : 'crossed')->formatStateUsing(fn (string $state): string => Ui::value($state))->color(fn (string $state): string => $state === 'crossed' ? 'warning' : 'gray'),
+                TextColumn::make('pre_change_run_uuid')->label(Ui::text('labels.safety_backup'))->toggleable(isToggledHiddenByDefault: true),
+                TextColumn::make('journal_phase')->label(Ui::text('labels.journal_state'))->state(function (RestoreRun $record): string {
                     $journal = $record->metadata['journal'] ?? null;
                     $phase = is_array($journal) ? ($journal['phase'] ?? null) : null;
 
-                    return is_string($phase) ? $phase : 'Not mirrored';
-                })->toggleable(),
-                TextColumn::make('uuid')->label('Restore UUID')->copyable()->toggleable(isToggledHiddenByDefault: true),
+                    return is_string($phase) ? $phase : 'not_mirrored';
+                })->formatStateUsing(fn (string $state): string => Ui::value($state, 'journal_phases'))->toggleable(),
+                TextColumn::make('uuid')->label(Ui::text('labels.restore_uuid'))->copyable()->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultPaginationPageOption(20)
             ->poll(fn (): ?string => app(PanelTableAvailability::class)->has('operations') && PendingOperation::query()->whereIn('status', ['pending', 'claimed', 'running'])->exists() ? '20s' : null);
@@ -173,28 +188,28 @@ final class Restore extends Page implements Tables\Contracts\HasTable
         $phrase = $data['confirmation'] ?? null;
         try {
             if ($type === PendingOperationType::LiveRestore && (($data['acknowledge_replacement'] ?? false) !== true || ($data['acknowledge_maintenance'] ?? false) !== true)) {
-                throw new \DomainException('Both live restore acknowledgements are required.');
+                throw new \DomainException(Ui::text('form_errors.acknowledgements'));
             }
             $profileValue = $data['restore_profile'] ?? null;
             $known = $data['known_source_run_uuid'] ?? null;
             $manual = $data['manual_source_run_uuid'] ?? null;
             if (filled($known) && filled($manual)) {
-                throw new \InvalidArgumentException('Choose either a known recovery point or a manual exact UUID.');
+                throw new \InvalidArgumentException(Ui::text('form_errors.one_source'));
             }
             $source = filled($known) ? $known : $manual;
             if (filled($known) && (! is_string($known) || ! $this->eligibleSourceQuery()->where('uuid', $known)->exists())) {
-                throw new \InvalidArgumentException('The selected recovery point is no longer eligible.');
+                throw new \InvalidArgumentException(Ui::text('form_errors.source_ineligible'));
             }
             $actor = Filament::auth()->user();
             abort_unless($actor instanceof Authenticatable, 403);
             if (! is_string($profileValue) || ! is_string($source)) {
-                throw new \InvalidArgumentException('An exact source and restore scope are required.');
+                throw new \InvalidArgumentException(Ui::text('form_errors.source_scope_required'));
             }
             $profile = RestoreProfile::from($profileValue);
             $operation = app(PendingOperationRequest::class)->submit($type, $actor, $source, $profile, is_string($phrase) ? $phrase : null);
-            Notification::make()->title('Restore request queued')->body('Operation '.$operation->uuid.' will run through the scheduler.')->success()->send();
+            Notification::make()->title(Ui::text('pages.restore.request_queued'))->body(Ui::text('pages.restore.request_queue_body', ['uuid' => $operation->uuid]))->success()->send();
         } catch (Throwable $exception) {
-            Notification::make()->title('Restore request refused')->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
+            Notification::make()->title(Ui::text('pages.restore.request_refused'))->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
         } finally {
             unset($phrase, $data['confirmation']);
         }
@@ -204,20 +219,26 @@ final class Restore extends Page implements Tables\Contracts\HasTable
     {
         $uuid = $this->selectedSource($get);
         if (! is_string($uuid) || $uuid === '') {
-            return 'Enter an exact source UUID to review its recorded components.';
+            return Ui::text('pages.restore.source_prompt');
         }
         $run = app(PanelTableAvailability::class)->has('runs') && app(PanelTableAvailability::class)->has('artifacts') ? BackupRun::query()->with('artifacts')->where('uuid', $uuid)->first() : null;
         if ($run === null) {
-            return 'This source is absent from the local catalog. The worker will resolve the immutable remote manifest before any change.';
+            return Ui::text('pages.restore.source_absent');
         }
         $archive = $run->artifacts->firstWhere('kind', ArtifactKind::ApplicationArchive);
         $snapshot = $run->artifacts->firstWhere('kind', ArtifactKind::ResticSnapshot);
         $repository = is_array($snapshot?->metadata) ? ($snapshot->metadata['repository_id'] ?? null) : null;
         $scope = $get('restore_profile');
 
-        return sprintf('Source %s · %s · consistency %s · scope %s. Archive %s (SHA %s). Snapshot %s. Repository %s. Live targets: %s. A verified safety backup is required before replacement.',
-            $run->uuid, $run->status->value, $run->consistency->value, is_string($scope) ? $scope : 'full',
-            $archive === null ? 'missing' : $archive->status->value, $archive === null ? 'unknown' : ($archive->sha256 ?? 'unknown'), $snapshot === null ? 'missing' : ($snapshot->snapshot_id ?? 'missing'), is_string($repository) ? $repository : 'unknown', $this->impactTargets(is_string($scope) ? $scope : 'full'));
+        return Ui::text('pages.restore.impact_summary', [
+            'uuid' => $run->uuid, 'status' => Ui::value($run->status), 'consistency' => Ui::value($run->consistency, 'consistency'),
+            'scope' => Ui::value(is_string($scope) ? $scope : 'full', 'profiles'),
+            'archive' => $archive === null ? Ui::value('missing') : Ui::value($archive->status),
+            'sha' => $archive === null ? Ui::value('unknown') : ($archive->sha256 ?? Ui::value('unknown')),
+            'snapshot' => $snapshot === null ? Ui::value('missing') : ($snapshot->snapshot_id ?? Ui::value('missing')),
+            'repository' => is_string($repository) ? $repository : Ui::value('unknown'),
+            'targets' => $this->impactTargets(is_string($scope) ? $scope : 'full'),
+        ]);
     }
 
     private function impactTargets(string $scope): string
@@ -226,15 +247,15 @@ final class Restore extends Page implements Tables\Contracts\HasTable
         try {
             if ($scope !== 'media') {
                 $database = app(DatabaseReplacement::class)->target();
-                $targets[] = 'database '.$database->database.' on connection '.$database->connection;
+                $targets[] = Ui::text('pages.restore.database_target', ['database' => $database->database, 'connection' => $database->connection]);
             }
             if ($scope !== 'database') {
                 foreach (app(MediaRootResolver::class)->destinations() as $destination) {
-                    $targets[] = 'media '.$destination->name.' at '.$destination->path;
+                    $targets[] = Ui::text('pages.restore.media_target', ['name' => $destination->name, 'path' => $destination->path]);
                 }
             }
         } catch (Throwable $exception) {
-            $targets[] = 'target inspection unavailable: '.app(SecretRedactor::class)->redact($exception->getMessage());
+            $targets[] = Ui::text('pages.restore.inspection_unavailable', ['error' => app(SecretRedactor::class)->redact($exception->getMessage())]);
         }
 
         return implode('; ', $targets);
@@ -245,23 +266,25 @@ final class Restore extends Page implements Tables\Contracts\HasTable
         $uuid = $this->selectedSource($get);
         $profile = $get('restore_profile');
         if (! is_string($uuid) || ! is_string($profile)) {
-            return 'A completed dry restore of the exact source and scope is required.';
+            return Ui::text('pages.restore.dry_required');
         }
         if (! app(PanelTableAvailability::class)->has('operations')) {
-            return 'Panel operation history is unavailable until package migrations are run after restore verification.';
+            return Ui::text('pages.restore.history_unavailable');
         }
         $dry = PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)
             ->where('source_run_uuid', $uuid)->where('restore_profile', $profile)
             ->latest('id')->first();
         if ($dry === null) {
-            return 'No matching dry restore is recorded. Prepare one first.';
+            return Ui::text('pages.restore.dry_missing');
         }
         $result = $dry->result ?? [];
         $warnings = is_array($result['warnings'] ?? null) ? $result['warnings'] : [];
         $blockers = is_array($result['blockers'] ?? null) ? $result['blockers'] : [];
 
-        return sprintf('Dry restore %s at %s UTC. %d warning(s), %d blocker(s). A completed result from the last 24 hours is required. The live worker repeats every safety check.',
-            $dry->status->value, $dry->finished_at?->toDateTimeString() ?? 'unknown', count($warnings), count($blockers));
+        return Ui::text('pages.restore.dry_summary', [
+            'status' => Ui::value($dry->status), 'time' => $dry->finished_at?->toDateTimeString() ?? Ui::value('unknown'),
+            'warnings' => count($warnings), 'blockers' => count($blockers),
+        ]);
     }
 
     private function warningsSummary(Get $get): string
@@ -269,22 +292,23 @@ final class Restore extends Page implements Tables\Contracts\HasTable
         $uuid = $this->selectedSource($get);
         $profile = $get('restore_profile');
         if (! is_string($uuid) || ! is_string($profile)) {
-            return 'Choose an exact source and scope to review the recorded dry restore findings.';
+            return Ui::text('pages.restore.choose_source');
         }
         if (! app(PanelTableAvailability::class)->has('operations')) {
-            return 'Panel operation history is unavailable until package migrations are run after restore verification.';
+            return Ui::text('pages.restore.history_unavailable');
         }
         $dry = PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)
             ->where('source_run_uuid', $uuid)->where('restore_profile', $profile)->latest('id')->first();
         if ($dry === null || ! is_array($dry->result)) {
-            return 'No completed dry restore findings are available. Submit a dry restore first.';
+            return Ui::text('pages.restore.findings_missing');
         }
         $warnings = is_array($dry->result['warnings'] ?? null) ? $dry->result['warnings'] : [];
         $blockers = is_array($dry->result['blockers'] ?? null) ? $dry->result['blockers'] : [];
 
-        return sprintf('Warnings: %s. Blockers: %s. Any blocker prevents submission. New findings discovered by the live worker also stop the restore.',
-            $warnings === [] ? 'none recorded' : implode('; ', array_filter($warnings, 'is_string')),
-            $blockers === [] ? 'none recorded' : implode('; ', array_filter($blockers, 'is_string')));
+        return Ui::text('pages.restore.findings_summary', [
+            'warnings' => $warnings === [] ? Ui::value('none_recorded') : implode('; ', array_filter($warnings, 'is_string')),
+            'blockers' => $blockers === [] ? Ui::value('none_recorded') : implode('; ', array_filter($blockers, 'is_string')),
+        ]);
     }
 
     private function selectedSource(Get $get): ?string
@@ -313,6 +337,9 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
     private function sourceLabel(BackupRun $run): string
     {
-        return sprintf('%s UTC · Recovery · %s · %s · %s', $run->requested_at?->format('M j, Y H:i') ?? 'Unknown time', $run->status->value, $run->consistency->value, $run->uuid);
+        return Ui::text('pages.restore.source_label', [
+            'time' => $run->requested_at?->translatedFormat('j M Y H:i') ?? Ui::text('pages.restore.unknown_time'),
+            'status' => Ui::value($run->status), 'consistency' => Ui::value($run->consistency, 'consistency'), 'uuid' => $run->uuid,
+        ]);
     }
 }

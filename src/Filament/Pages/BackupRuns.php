@@ -76,7 +76,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
         return $table
             ->query(BackupRun::query()->with('artifacts')->latest('requested_at'))
             ->columns([
-                TextColumn::make('requested_at')->label(Ui::text('labels.created'))->dateTime()->sortable(),
+                TextColumn::make('requested_at')->label(Ui::text('labels.created'))->dateTime('j M Y g:i A')->sortable(),
                 TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'profiles')),
                 TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupRun $record): string => match ($record->status) {
                     BackupStatus::Completed => 'success',

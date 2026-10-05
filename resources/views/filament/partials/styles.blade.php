@@ -1,11 +1,11 @@
 @once
     <style>
-        .qb-ui .space-y-5 > * + * { margin-block-start: 1.25rem; }
+        .qb-ui.space-y-5 > * + * { margin-block-start: 1.25rem; }
         .qb-ui .space-y-3 > * + * { margin-block-start: .75rem; }
         .qb-ui .space-y-2 > * + * { margin-block-start: .5rem; }
         .qb-ui .space-y-1 > * + * { margin-block-start: .25rem; }
-        .qb-ui .grid.gap-5 { gap: 1.25rem; }
-        .qb-ui .grid.gap-4 { gap: 1rem; }
+        .qb-ui .grid.gap-5 { gap: 1.25rem; align-items: start; }
+        .qb-ui .grid.gap-4 { gap: 1rem; align-items: start; }
         .qb-ui .grid.gap-3 { gap: .75rem; }
         .qb-ui .grid.gap-2 { gap: .5rem; }
 

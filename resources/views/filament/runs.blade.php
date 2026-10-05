@@ -3,7 +3,7 @@
     @php($ui = \Quraba\Backup\Filament\Ui::class)
     <div class="qb-ui space-y-5">
         @if (! $pendingEnabled)
-            <x-filament::section :heading="$ui::text('sections.manual_disabled')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.panel_disabled') }}</p></x-filament::section>
+            <x-filament::section :heading="$ui::text('sections.manual_disabled')" icon="heroicon-o-exclamation-triangle" icon-color="warning"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.panel_disabled') }}</p></x-filament::section>
         @endif
         @if ($catalogAvailable)
             {{ $this->table }}

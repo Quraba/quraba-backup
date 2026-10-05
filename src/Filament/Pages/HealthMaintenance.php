@@ -99,7 +99,7 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
 
         return $table->query(BackupMaintenanceRun::query()->latest('id'))
             ->columns([
-                TextColumn::make('created_at')->label(Ui::text('labels.created'))->dateTime()->sortable(),
+                TextColumn::make('created_at')->label(Ui::text('labels.created'))->dateTime('j M Y g:i A')->sortable(),
                 TextColumn::make('operation')->label(Ui::text('labels.operation'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'maintenance_operations')),
                 TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupMaintenanceRun $record): string => match ($record->status->value) {
                     'completed' => 'success', 'failed', 'indeterminate' => 'danger', default => 'warning'

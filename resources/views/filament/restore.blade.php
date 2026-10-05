@@ -6,10 +6,10 @@
             <x-filament::section :heading="$ui::text('sections.panel_history')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.migrations') }}</p></x-filament::section>
         @endif
         @if (! $pendingEnabled)
-            <x-filament::section :heading="$ui::text('sections.panel_disabled')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.panel_disabled') }}</p></x-filament::section>
+            <x-filament::section :heading="$ui::text('sections.panel_disabled')" icon="heroicon-o-exclamation-triangle" icon-color="warning"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.panel_disabled') }}</p></x-filament::section>
         @endif
         @if (! $liveEnabled)
-            <x-filament::section :heading="$ui::text('sections.live_disabled')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.live_disabled') }}</p></x-filament::section>
+            <x-filament::section :heading="$ui::text('sections.live_disabled')" icon="heroicon-o-information-circle" icon-color="info"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.live_disabled') }}</p></x-filament::section>
         @endif
         @if (($journals['unreadable'] ?? []) !== [])
             <x-filament::section :heading="$ui::text('sections.unreadable_journals')"><p class="text-sm text-danger-600 dark:text-danger-400">{{ $ui::text('pages.restore.journal_unreadable', ['count' => count($journals['unreadable'])]) }}</p></x-filament::section>

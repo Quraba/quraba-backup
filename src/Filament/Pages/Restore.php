@@ -130,14 +130,14 @@ final class Restore extends Page implements Tables\Contracts\HasTable
 
         return $table->query(RestoreRun::query()->latest('id'))
             ->columns([
-                TextColumn::make('created_at')->label(Ui::text('labels.started'))->dateTime()->sortable(),
+                TextColumn::make('created_at')->label(Ui::text('labels.started'))->dateTime('j M Y g:i A')->sortable(),
                 TextColumn::make('mode')->label(Ui::text('labels.operation'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'modes')),
                 TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'profiles')),
                 TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (RestoreRun $record): string => match ($record->status->value) {
                     'completed' => 'success', 'failed', 'indeterminate', 'abandoned' => 'danger', default => 'warning'
                 }),
                 TextColumn::make('source_run_uuid')->label(Ui::text('labels.source'))->copyable()->toggleable(),
-                TextColumn::make('completed_at')->label(Ui::text('labels.completed_at'))->dateTime()->toggleable(),
+                TextColumn::make('completed_at')->label(Ui::text('labels.completed_at'))->dateTime('j M Y g:i A')->toggleable(),
                 TextColumn::make('destructive_started_at')->label(Ui::text('labels.boundary'))->badge()->state(fn (RestoreRun $record): string => $record->destructive_started_at === null ? 'not_crossed' : 'crossed')->formatStateUsing(fn (string $state): string => Ui::value($state))->color(fn (string $state): string => $state === 'crossed' ? 'warning' : 'gray'),
                 TextColumn::make('pre_change_run_uuid')->label(Ui::text('labels.safety_backup'))->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('journal_phase')->label(Ui::text('labels.journal_state'))->state(function (RestoreRun $record): string {

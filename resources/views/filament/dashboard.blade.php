@@ -15,6 +15,8 @@
             </div>
             @if (($journals['unresolved'] ?? 0) > 0 || ($journals['unreadable'] ?? []) !== [])
                 <p class="mt-3 text-sm text-danger-600 dark:text-danger-400">{{ $ui::text('pages.dashboard.restore_attention', ['unresolved' => $journals['unresolved'] ?? 0, 'unreadable' => count($journals['unreadable'] ?? [])]) }}</p>
+            @elseif (($health['state'] ?? null) === 'unknown')
+                <p class="mt-3 text-sm">{{ $ui::text('operator.health_unknown') }}</p>
             @elseif (($health['state'] ?? null) !== 'healthy')
                 @php($issue = collect($health['checks'] ?? [])->first(fn ($check) => in_array($check['status'] ?? null, ['fail', 'warn'], true)))
                 @if ($issue)

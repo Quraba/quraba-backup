@@ -79,7 +79,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
             ->query(BackupRun::query()->with('artifacts')->latest('requested_at'))
             ->columns([
                 TextColumn::make('requested_at')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at))->sortable(),
-                TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'backup_types')),
+                TextColumn::make('profile')->label(Ui::text('operator.backup_type'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'backup_types')),
                 TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state, BackupRun $record): string => OperatorStatus::backupStage($record))->color(fn (BackupRun $record): string => match ($record->status) {
                     BackupStatus::Completed => 'success',
                     BackupStatus::Failed, BackupStatus::Indeterminate => 'danger',
@@ -90,7 +90,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                 TextColumn::make('uuid')->label(Ui::text('labels.uuid'))->searchable(isIndividual: true)->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                SelectFilter::make('profile')->label(Ui::text('labels.profile'))->options(array_combine(array_column(BackupProfile::cases(), 'value'), array_map(fn (BackupProfile $p): string => Ui::value($p, 'profiles'), BackupProfile::cases()))),
+                SelectFilter::make('profile')->label(Ui::text('operator.backup_type'))->options(array_combine(array_column(BackupProfile::cases(), 'value'), array_map(fn (BackupProfile $p): string => Ui::value($p, 'backup_types'), BackupProfile::cases()))),
                 SelectFilter::make('status')->label(Ui::text('labels.status'))->options(array_combine(array_column(BackupStatus::cases(), 'value'), array_map(fn (BackupStatus $s): string => Ui::value($s), BackupStatus::cases()))),
                 SelectFilter::make('trigger')->label(Ui::text('labels.trigger'))->options(array_combine(array_column(BackupTrigger::cases(), 'value'), array_map(fn (BackupTrigger $t): string => Ui::value($t, 'triggers'), BackupTrigger::cases()))),
                 SelectFilter::make('consistency')->label(Ui::text('labels.consistency'))->options(array_combine(array_column(ConsistencyLevel::cases(), 'value'), array_map(fn (ConsistencyLevel $c): string => Ui::value($c, 'consistency'), ConsistencyLevel::cases()))),
@@ -117,7 +117,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
             ->recordActions([
                 Action::make('details')->label(Ui::text('actions.details'))->schema([
                     Section::make(Ui::text('pages.runs.details'))->columns(2)->schema([
-                        TextEntry::make('profile')->label(Ui::text('labels.profile'))->state(fn (BackupRun $record): string => Ui::value($record->profile, 'backup_types')),
+                        TextEntry::make('profile')->label(Ui::text('operator.backup_type'))->state(fn (BackupRun $record): string => Ui::value($record->profile, 'backup_types')),
                         TextEntry::make('status')->label(Ui::text('labels.status'))->state(fn (BackupRun $record): string => OperatorStatus::backupStage($record))->badge(),
                         TextEntry::make('availability')->label(Ui::text('operator.restore_availability'))->state(fn (BackupRun $record): string => $this->availability($record) === 'unavailable' ? Ui::text('operator.unavailable') : Ui::value($this->availability($record), 'profiles')),
                         TextEntry::make('created')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at)),

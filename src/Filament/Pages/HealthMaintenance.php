@@ -15,9 +15,6 @@ use Filament\Notifications\Notification;
 use Filament\Pages\Page;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Section;
-use Filament\Tables;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Table;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
@@ -33,10 +30,8 @@ use Quraba\Backup\Scheduling\ScheduleSettings;
 use Quraba\Backup\Security\SecretRedactor;
 use Throwable;
 
-final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
+final class HealthMaintenance extends Page
 {
-    use Tables\Concerns\InteractsWithTable;
-
     protected string $view = 'quraba-backup::filament.health-maintenance';
 
     protected static ?int $navigationSort = 4;
@@ -54,6 +49,16 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
     public function getTitle(): string
     {
         return Ui::text('pages.health.title');
+    }
+
+    public function getSubheading(): string
+    {
+        return Ui::text('visual.health_subtitle');
+    }
+
+    public function getPageClasses(): array
+    {
+        return ['qb-design', 'qb-health'];
     }
 
     public static function canAccess(): bool
@@ -91,27 +96,9 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             Action::make('check_now')->label(Ui::text('actions.refresh_health'))
                 ->visible(fn (): bool => BackupPanelAccess::allows(PendingOperationType::HealthRefresh->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->action(fn () => $this->request(PendingOperationType::HealthRefresh)),
-            ActionGroup::make($checks)->label(Ui::text('pages.health.diagnostics'))->button()->color('gray'),
-            ActionGroup::make($schedules)->label(Ui::text('actions.edit_schedules'))->button()->color('gray'),
+            ActionGroup::make($checks)->label(Ui::text('pages.health.diagnostics'))->icon('heroicon-o-adjustments-horizontal')->button()->color('gray'),
+            ActionGroup::make($schedules)->label(Ui::text('actions.edit_schedules'))->icon('heroicon-o-ellipsis-vertical')->button()->color('gray'),
         ];
-    }
-
-    public function table(Table $table): Table
-    {
-        BackupPanelAccess::authorize('view-dashboard');
-
-        return $table->query(BackupMaintenanceRun::query()->latest('id'))
-            ->columns([
-                TextColumn::make('created_at')->label(Ui::text('labels.created'))->dateTime('j M Y g:i A')->sortable(),
-                TextColumn::make('operation')->label(Ui::text('labels.operation'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'maintenance_operations')),
-                TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupMaintenanceRun $record): string => match ($record->status->value) {
-                    'completed' => 'success', 'failed', 'indeterminate' => 'danger', default => 'warning'
-                }),
-                TextColumn::make('dry_run')->label(Ui::text('labels.read_only'))->badge()->color('gray')
-                    ->formatStateUsing(fn (bool $state): string => Ui::maintenanceMode($state)),
-                TextColumn::make('uuid')->label(Ui::text('labels.uuid'))->toggleable(isToggledHiddenByDefault: true),
-            ])
-            ->defaultPaginationPageOption(20);
     }
 
     protected function getViewData(): array
@@ -143,6 +130,12 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             $scheduleError = app(SecretRedactor::class)->redact($exception->getMessage());
         }
 
+        try {
+            $maintenanceHistory = $tables->has('maintenance') ? BackupMaintenanceRun::query()->latest('id')->paginate(20, ['*'], 'maintenancePage') : collect();
+        } catch (Throwable) {
+            $maintenanceHistory = collect();
+        }
+
         return [
             'latest' => $latest,
             'schedule' => $schedule,
@@ -153,6 +146,7 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
             'operationsAvailable' => $operationsAvailable,
             'maintenanceAvailable' => $tables->has('maintenance'),
+            'maintenanceHistory' => $maintenanceHistory,
             'unresolved' => $unresolved,
             'secrets' => [
                 Ui::text('configuration.b2_key_id') => filled(config('quraba-backup.storage.b2.key_id')),

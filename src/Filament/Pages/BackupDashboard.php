@@ -54,12 +54,22 @@ final class BackupDashboard extends Page
         return Ui::text('navigation.dashboard');
     }
 
+    public function getSubheading(): string
+    {
+        return Ui::text('visual.overview_subtitle');
+    }
+
+    public function getPageClasses(): array
+    {
+        return ['qb-design', 'qb-overview'];
+    }
+
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('create_backup')->label(Ui::text('operator.create_backup'))->url(BackupRuns::getUrl())->visible(fn (): bool => BackupPanelAccess::allows('view-details')),
-            Action::make('restore')->label(Ui::text('operator.start_restore'))->url(Restore::getUrl())->visible(fn (): bool => BackupPanelAccess::allows('view-recovery')),
-            Action::make('check_now')->label(Ui::text('operator.check_now'))->visible(fn (): bool => BackupPanelAccess::allows('run-health-check') && (bool) config('quraba-backup.filament.pending_enabled'))->action(function (): void {
+            Action::make('create_backup')->label(Ui::text('operator.create_backup'))->icon('heroicon-o-circle-stack')->url(BackupRuns::getUrl())->visible(fn (): bool => BackupPanelAccess::allows('view-details')),
+            Action::make('restore')->label(Ui::text('operator.start_restore'))->icon('heroicon-o-arrow-uturn-left')->color('gray')->url(Restore::getUrl())->visible(fn (): bool => BackupPanelAccess::allows('view-recovery')),
+            Action::make('check_now')->label(Ui::text('operator.check_now'))->icon('heroicon-o-heart')->color('gray')->visible(fn (): bool => BackupPanelAccess::allows('run-health-check') && (bool) config('quraba-backup.filament.pending_enabled'))->action(function (): void {
                 BackupPanelAccess::authorize('run-health-check');
                 try {
                     $actor = Filament::auth()->user();

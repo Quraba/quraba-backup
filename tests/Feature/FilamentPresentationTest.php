@@ -224,6 +224,26 @@ final class FilamentPresentationTest extends TestCase
         self::assertStringNotContainsString($database->uuid, $options[$database->uuid]);
     }
 
+    public function test_inline_backup_check_uses_the_same_exact_source_eligibility(): void
+    {
+        $this->config()->set('quraba-backup.filament.pending_enabled', true);
+        $this->config()->set('quraba-backup.filament.authorization.dry-restore', static fn (): bool => true);
+        $database = $this->completedBackup(BackupProfile::Database, [ArtifactKind::ApplicationArchive]);
+        $full = $this->completedBackup(BackupProfile::Recovery, [ArtifactKind::ApplicationArchive, ArtifactKind::ResticSnapshot]);
+        $page = new Restore;
+        $page->restoreScope = RestoreProfile::Full->value;
+        $page->restoreSourceUuid = $database->uuid;
+        $page->checkSelectedBackup();
+        self::assertSame(0, PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)->count());
+
+        $page->restoreSourceUuid = $full->uuid;
+        $page->checkSelectedBackup();
+        $operation = PendingOperation::query()->where('type', PendingOperationType::DryRestore->value)->sole();
+        self::assertSame($full->uuid, $operation->source_run_uuid);
+        self::assertSame(RestoreProfile::Full, $operation->restore_profile);
+        self::assertSame($operation->uuid, $page->checkUuid);
+    }
+
     public function test_restore_now_requires_a_recent_successful_check_without_blockers(): void
     {
         $this->config()->set('quraba-backup.filament.pending_enabled', true);

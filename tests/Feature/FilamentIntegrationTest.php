@@ -44,9 +44,9 @@ final class FilamentIntegrationTest extends TestCase
             $source = file_get_contents(__DIR__.'/../../resources/views/filament/'.$view.'.blade.php');
             self::assertIsString($source);
             $source = str_replace(['<x-filament-panels::page>', '</x-filament-panels::page>'], ['<div>', '</div>'], $source);
-            $source = preg_replace('/<x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?\s*\/>/', '<div></div>', $source);
-            $source = preg_replace('/<x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?>/', '<div>', (string) $source);
-            $source = preg_replace('/<\/x-filament::(?:section|badge|button|input(?:\.wrapper|\.select)?)>/', '</div>', (string) $source);
+            $source = preg_replace('/<x-filament::(?:section|badge|button|icon|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?\s*\/>/', '<div></div>', $source);
+            $source = preg_replace('/<x-filament::(?:section|badge|button|icon|input(?:\.wrapper|\.select)?)(?:\s[^>]*)?>/', '<div>', (string) $source);
+            $source = preg_replace('/<\/x-filament::(?:section|badge|button|icon|input(?:\.wrapper|\.select)?)>/', '</div>', (string) $source);
             self::assertNotSame('', Blade::compileString((string) $source));
         }
     }

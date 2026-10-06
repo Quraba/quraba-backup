@@ -1,60 +1,76 @@
 <x-filament-panels::page>
-    @include('quraba-backup::filament.partials.styles')
+    @include('quraba-backup::filament.partials.reference-styles')
     @php($ui = \Quraba\Backup\Filament\Ui::class)
     @php($health = $latest['health_refresh'] ?? null)
     @php($checks = is_array($health?->result['checks'] ?? null) ? $health->result['checks'] : [])
-    @php($issues = array_filter($checks, fn ($check) => in_array($check['status'] ?? '', ['fail', 'warn'], true)))
-    @php($storage = collect($checks)->first(fn ($check) => ($check['id'] ?? '') === 'health.repository'))
-    <div class="qb-ui space-y-6" @if ($health?->status?->isOpen()) wire:poll.20s @endif>
-        @if (! $operationsAvailable || ! $maintenanceAvailable)
-            <x-filament::section :heading="$ui::text('sections.panel_history')"><p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.migrations') }}</p></x-filament::section>
-        @endif
-        <x-filament::section :heading="$ui::text('navigation.health')" :description="$ui::text('pages.dashboard.health_help')">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <x-filament::badge :color="match ($health?->result['state'] ?? null) { 'healthy' => 'success', 'degraded' => 'warning', 'failed' => 'danger', default => 'gray' }">{{ $health ? $ui::value($health->result['state'] ?? 'unknown') : $ui::text('operator.health_unknown') }}</x-filament::badge>
-                <span class="text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('operator.last_check') }}: <bdi>{{ $ui::dateTime($health?->finished_at) }}</bdi></span>
+    @php($issues = collect($checks)->filter(fn ($check) => in_array($check['status'] ?? null, ['fail', 'warn'], true)))
+    @php($storage = collect($checks)->firstWhere('id', 'health.repository'))
+    @php($healthState = $health?->result['state'] ?? 'unknown')
+    <div class="qb-canvas" x-data @if ($health?->status?->isOpen()) wire:poll.20s @endif>
+        @if (! $operationsAvailable || ! $maintenanceAvailable)<div class="qb-card qb-section qb-warn-text">{{ $ui::text('notices.migrations') }}</div>@endif
+        <section class="qb-card qb-hero qb-hero--amber" aria-labelledby="qb-health-summary-title">
+            <div class="qb-hero-art" aria-hidden="true"><x-filament::icon icon="heroicon-o-shield-exclamation" /></div>
+            <div class="qb-hero-main"><div class="qb-hero-heading"><h2 id="qb-health-summary-title">{{ $ui::text(match ($healthState) { 'healthy' => 'visual.health_summary_ok', 'degraded', 'failed' => 'visual.health_summary', default => 'visual.health_summary_unknown' }) }}</h2></div>
+                <p>{{ $issues->isNotEmpty() ? $ui::text('visual.health_warning') : ($healthState === 'healthy' ? $ui::text('visual.health_ready') : $ui::text('operator.health_unknown')) }}</p>
             </div>
-            <dl class="mt-4 grid gap-4 text-sm sm:grid-cols-2">
-                <div><dt class="font-medium">{{ $ui::text('operator.storage') }}</dt><dd>{{ $storage ? $ui::value($storage['status'] ?? null) : $ui::text('empty_states.not_checked') }}</dd></div>
-                <div><dt class="font-medium">{{ $ui::text('operator.background') }}</dt><dd>{{ $pendingEnabled ? ($workerRecent ? $ui::value('recently_observed') : $ui::text($waitingRequests > 0 ? 'operator.background_stale' : 'operator.background_unseen')) : $ui::value('disabled') }}</dd></div>
-            </dl>
-            @if ($issues !== [] || $unresolved->isNotEmpty())
-                <div class="mt-5 space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
-                    @foreach ($issues as $issue)
-                        <div class="text-sm"><x-filament::badge :color="($issue['status'] ?? '') === 'fail' ? 'danger' : 'warning'">{{ $ui::value($issue['status'] ?? null) }}</x-filament::badge> <span class="font-medium">{{ $ui::checkLabel($issue['id'] ?? '', $issue['label'] ?? $ui::text('operator.attention')) }}</span><p class="mt-1 text-gray-600 dark:text-gray-300">{{ \Quraba\Backup\Filament\OperatorStatus::healthIssue($issue) }}</p></div>
-                    @endforeach
-                    @foreach ($unresolved as $operation)
-                        <p class="text-sm text-danger-600 dark:text-danger-400">{{ $ui::value($operation->type, 'operations') }}: {{ \Quraba\Backup\Filament\OperatorStatus::failure($operation->failure_code, $operation->failure_message) }}</p>
-                    @endforeach
-                </div>
-            @endif
-        </x-filament::section>
+            <div class="qb-health-rail"><div><x-filament::icon icon="heroicon-o-calendar-days" /><span>{{ $ui::text('operator.last_check') }}<bdi>{{ $ui::dateTime($health?->finished_at) }}</bdi></span></div><div><x-filament::icon icon="heroicon-o-cog-6-tooth" /><span>{{ $ui::text('operator.background') }}<small>{{ $pendingEnabled ? $ui::value($workerRecent ? 'recently_observed' : 'not_recently_observed') : $ui::value('disabled') }}</small></span></div></div>
+        </section>
 
-        <x-filament::section :heading="$ui::text('pages.health.schedules_worker')" collapsible collapsed>
-            <div class="space-y-3 text-sm">
-                @if ($scheduleError)<p class="text-danger-600 dark:text-danger-400">{{ $scheduleError }}</p>@endif
-                @foreach ($schedule as $key => $setting)
-                    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2 dark:border-gray-800"><span>{{ $ui::value($key, 'schedule') }}</span><span><bdi>{{ is_array($setting['value']) ? $ui::scheduleSetting($setting['value']) : (is_bool($setting['value']) ? $ui::value($setting['value'] ? 'enabled' : 'disabled') : ($setting['value'] ?? $ui::text('schedule.application_default'))) }}</bdi> <x-filament::badge color="gray">{{ $ui::value($setting['source'], 'schedule.source') }}</x-filament::badge></span></div>
+        <div class="qb-issue-grid">
+            <section class="qb-card qb-section" aria-labelledby="qb-issues-title"><div class="qb-section-head"><span class="qb-icon qb-icon--amber"><x-filament::icon icon="heroicon-o-exclamation-triangle" /></span><div><h2 id="qb-issues-title">{{ $ui::text('visual.health_issues') }}</h2><p>{{ $ui::text('visual.health_issues_help') }}</p></div></div>
+                <div class="qb-issue-list">
+                    @forelse ($issues as $issue)
+                        @php($issueId = $issue['id'] ?? '')
+                        @php($issueIcon = str_contains($issueId, 'password') ? 'heroicon-o-lock-closed' : (str_contains($issueId, 'retention') ? 'heroicon-o-clock' : 'heroicon-o-circle-stack'))
+                        <div class="qb-issue-row"><span class="qb-icon {{ str_contains($issueId, 'database') ? 'qb-icon--purple' : '' }}"><x-filament::icon :icon="$issueIcon" /></span><div class="qb-issue-text"><strong>{{ $ui::checkLabel($issueId, $issue['label'] ?? $ui::text('operator.attention')) }}</strong><small>{{ \Quraba\Backup\Filament\OperatorStatus::healthIssue($issue) }}</small></div><span class="qb-pill qb-pill--{{ ($issue['status'] ?? '') === 'fail' ? 'red' : 'amber' }}">{{ $ui::value($issue['status'] ?? null) }}</span></div>
+                    @empty
+                        <div class="qb-empty"><x-filament::icon icon="heroicon-o-shield-check" /><strong>{{ $health ? $ui::text('visual.health_ready') : $ui::text('operator.health_unknown') }}</strong></div>
+                    @endforelse
+                </div>
+            </section>
+            <section class="qb-card qb-section" aria-labelledby="qb-other-title"><div class="qb-section-head"><span class="qb-icon qb-icon--green"><x-filament::icon icon="heroicon-o-check-circle" /></span><div><h2 id="qb-other-title">{{ $ui::text('visual.health_other') }}</h2><p>{{ $ui::text('visual.health_other_help') }}</p></div></div>
+                <div class="qb-issue-list">
+                    <div class="qb-issue-row"><span class="qb-icon"><x-filament::icon icon="heroicon-o-server-stack" /></span><div class="qb-issue-text"><strong>{{ $ui::text('operator.storage') }}</strong><small>{{ $storage ? $ui::value($storage['status'] ?? null) : $ui::text('empty_states.not_checked') }}</small></div><span class="qb-pill qb-pill--{{ ($storage['status'] ?? null) === 'pass' ? 'green' : 'amber' }}">{{ $ui::value(($storage['status'] ?? null) === 'pass' ? 'pass' : 'unknown') }}</span></div>
+                    <div class="qb-issue-row"><span class="qb-icon"><x-filament::icon icon="heroicon-o-cog-6-tooth" /></span><div class="qb-issue-text"><strong>{{ $ui::text('operator.background') }}</strong><small>{{ $pendingEnabled ? ($workerRecent ? $ui::value('recently_observed') : $ui::text($waitingRequests > 0 ? 'operator.background_stale' : 'operator.background_unseen')) : $ui::value('disabled') }}</small></div><span class="qb-pill qb-pill--{{ $workerRecent ? 'green' : 'amber' }}">{{ $ui::value($workerRecent ? 'pass' : 'unknown') }}</span></div>
+                </div>
+            </section>
+        </div>
+
+        <section class="qb-card qb-section" aria-labelledby="qb-main-checks-title"><div class="qb-section-head"><span class="qb-icon"><x-filament::icon icon="heroicon-o-cube" /></span><div><h2 id="qb-main-checks-title">{{ $ui::text('visual.health_main') }}</h2><p>{{ $ui::text('visual.health_main_help') }}</p></div></div>
+            <div class="qb-checks">
+                @foreach (['health_refresh' => ['heroicon-o-circle-stack', 'qb-icon--purple'], 'doctor' => ['heroicon-o-shield-check', ''], 'restic_check' => ['heroicon-o-server-stack', ''], 'retention_plan' => ['heroicon-o-document-text', 'qb-icon--purple']] as $type => [$icon, $tone])
+                    @php($operation = $latest[$type] ?? null)
+                    @php($state = $operation?->result['state'] ?? ($operation?->status?->value === 'completed' ? 'healthy' : ($operation?->status?->value === 'failed' ? 'failed' : 'unknown')))
+                    <div class="qb-check"><div class="qb-check-top"><span class="qb-icon {{ $tone }}"><x-filament::icon :icon="$icon" /></span><strong>{{ $ui::value($type, 'operations') }}</strong></div><span class="qb-pill qb-pill--{{ match ($state) { 'healthy' => 'green', 'failed' => 'red', 'degraded' => 'amber', default => 'gray' } }}">{{ $ui::value($state) }}</span><p>{{ $operation ? \Quraba\Backup\Filament\OperatorStatus::operationStage($operation) : $ui::text('empty_states.never_run') }}</p><button type="button" class="qb-detail-link" x-on:click="document.getElementById('qb-health-detail-{{ $type }}').open = true; document.getElementById('qb-health-detail-{{ $type }}').scrollIntoView({behavior:'smooth',block:'center'})">{{ $ui::text('visual.view_details') }} ←</button></div>
                 @endforeach
             </div>
-        </x-filament::section>
-        <x-filament::section :heading="$ui::text('operator.advanced')" collapsible collapsed>
-            <div class="space-y-4">
+        </section>
+
+        <div class="qb-columns">
+            <section class="qb-card qb-section" aria-labelledby="qb-schedule-title"><div class="qb-section-head"><span class="qb-icon"><x-filament::icon icon="heroicon-o-clock" /></span><div><h2 id="qb-schedule-title">{{ $ui::text('pages.health.schedules_worker') }}</h2><p>{{ $ui::text('pages.health.schedules_help') }}</p></div></div>
+                <div class="qb-kv">
+                    @foreach (['timezone' => 'heroicon-o-globe-alt', 'database' => 'heroicon-o-circle-stack', 'media' => 'heroicon-o-document', 'recovery' => 'heroicon-o-calendar-days'] as $key => $icon)
+                        @php($setting = $schedule[$key] ?? null)
+                        <div class="qb-kv-row"><span class="qb-kv-label"><x-filament::icon :icon="$icon" />{{ $ui::value($key, 'schedule') }}</span><bdi dir="{{ $key === 'timezone' ? 'ltr' : 'auto' }}">{{ $setting ? (is_array($setting['value']) ? $ui::scheduleSetting($setting['value']) : ($setting['value'] ?: $ui::text('schedule.application_default'))) : '—' }}</bdi></div>
+                    @endforeach
+                    <div class="qb-kv-row"><span class="qb-kv-label"><x-filament::icon icon="heroicon-o-cog-6-tooth" />{{ $ui::text('operator.background') }}</span><span class="qb-pill qb-pill--{{ $workerRecent ? 'green' : 'amber' }}">{{ $pendingEnabled ? $ui::value($workerRecent ? 'recently_observed' : 'not_recently_observed') : $ui::value('disabled') }}</span></div>
+                </div>@if ($scheduleError)<p class="qb-danger-text">{{ $scheduleError }}</p>@endif
+            </section>
+            <section class="qb-card qb-section" aria-labelledby="qb-unresolved-title"><div class="qb-section-head"><span class="qb-icon"><x-filament::icon icon="heroicon-o-clock" /></span><div><h2 id="qb-unresolved-title">{{ $ui::text('visual.health_unresolved') }}</h2><p>{{ $ui::text('visual.health_unresolved_help') }}</p></div></div>
+                @if ($unresolved->isEmpty())<div class="qb-empty"><x-filament::icon icon="heroicon-o-document-text" /><strong>{{ $ui::text('empty_states.no_operations') }}</strong><span>{{ $ui::text('visual.all_complete') }}</span></div>
+                @else<div class="qb-issue-list">@foreach ($unresolved as $operation)<div class="qb-issue-row"><span class="qb-icon qb-icon--amber"><x-filament::icon icon="heroicon-o-exclamation-triangle" /></span><div class="qb-issue-text"><strong>{{ $ui::value($operation->type, 'operations') }}</strong><small>{{ \Quraba\Backup\Filament\OperatorStatus::failure($operation->failure_code, $operation->failure_message) }}</small></div><span class="qb-pill qb-pill--amber">{{ $ui::value($operation->status) }}</span></div>@endforeach</div>@endif
+            </section>
+        </div>
+
+        <section class="qb-card qb-section" aria-labelledby="qb-health-advanced-title"><div class="qb-section-head"><span class="qb-icon"><x-filament::icon icon="heroicon-o-adjustments-horizontal" /></span><div><h2 id="qb-health-advanced-title">{{ $ui::text('visual.health_advanced') }}</h2><p>{{ $ui::text('visual.health_advanced_help') }}</p></div></div>
+            <div class="qb-accordion">
                 @foreach (['health_refresh', 'doctor', 'restic_check', 'retention_plan'] as $type)
                     @php($operation = $latest[$type] ?? null)
-                    <x-filament::section :heading="$ui::value($type, 'operations')" collapsible collapsed>
-                        <p class="text-sm">{{ $operation ? \Quraba\Backup\Filament\OperatorStatus::operationStage($operation) : $ui::text('empty_states.never_run') }} · {{ $ui::dateTime($operation?->finished_at) }}</p>
-                        @if ($operation?->failure_message)<p class="mt-2 text-sm text-danger-600 dark:text-danger-400">{{ \Quraba\Backup\Filament\OperatorStatus::failure($operation->failure_code, $operation->failure_message) }}</p>@endif
-                        <x-filament::section :heading="$ui::text('technical_detail')" collapsible collapsed>
-                            <p class="text-sm">{{ $ui::text('operator.reference') }}: <bdi class="break-all font-mono" dir="ltr">{{ $operation?->uuid ?? '—' }}</bdi></p>
-                            <p class="text-sm">{{ $ui::text('operator.technical_failure') }}: {{ app(\Quraba\Backup\Security\SecretRedactor::class)->redact((string) $operation?->failure_message) }}</p>
-                            @if (is_array($operation?->result['checks'] ?? null))@foreach ($operation->result['checks'] as $check)<p class="text-sm">{{ $ui::checkLabel($check['id'] ?? '', $check['label'] ?? '') }} · {{ $ui::value($check['status'] ?? null) }}: {{ app(\Quraba\Backup\Security\SecretRedactor::class)->redact((string) ($check['message'] ?? '')) }}</p>@endforeach@endif
-                        </x-filament::section>
-                    </x-filament::section>
+                    <details id="qb-health-detail-{{ $type }}"><summary>{{ $ui::value($type, 'operations') }}<x-filament::icon icon="heroicon-o-chevron-down" /></summary><div class="qb-accordion-content"><p>{{ $operation ? \Quraba\Backup\Filament\OperatorStatus::operationStage($operation) : $ui::text('empty_states.never_run') }} · <bdi>{{ $ui::dateTime($operation?->finished_at) }}</bdi></p><p>{{ $ui::text('operator.reference') }}: <bdi dir="ltr">{{ $operation?->uuid ?? '—' }}</bdi></p>@if ($operation?->failure_message)<p>{{ \Quraba\Backup\Filament\OperatorStatus::failure($operation->failure_code, $operation->failure_message) }}</p>@endif @if (is_array($operation?->result['checks'] ?? null))@foreach ($operation->result['checks'] as $check)<p>{{ $ui::checkLabel($check['id'] ?? '', $check['label'] ?? '') }} · {{ $ui::value($check['status'] ?? null) }}: {{ app(\Quraba\Backup\Security\SecretRedactor::class)->redact((string) ($check['message'] ?? '')) }}</p>@endforeach @endif</div></details>
                 @endforeach
-                <x-filament::section :heading="$ui::text('pages.health.configuration')" collapsible collapsed><div class="grid gap-3 text-sm sm:grid-cols-2">@foreach ($secrets as $name => $configured)<div class="flex items-center justify-between gap-2"><span>{{ $name }}</span><x-filament::badge :color="$configured ? 'success' : 'warning'">{{ $ui::value($configured ? 'configured' : 'missing') }}</x-filament::badge></div>@endforeach</div></x-filament::section>
-                @if ($maintenanceAvailable)<x-filament::section :heading="$ui::text('pages.health.history')" collapsible collapsed>{{ $this->table }}</x-filament::section>@endif
+                <details><summary>{{ $ui::text('pages.health.configuration') }}<x-filament::icon icon="heroicon-o-chevron-down" /></summary><div class="qb-accordion-content">@foreach ($secrets as $name => $configured)<p>{{ $name }}: {{ $ui::value($configured ? 'configured' : 'missing') }}</p>@endforeach</div></details>
+                <details><summary>{{ $ui::text('pages.health.history') }}<x-filament::icon icon="heroicon-o-chevron-down" /></summary><div class="qb-accordion-content">@forelse ($maintenanceHistory as $run)<p><bdi>{{ $ui::dateTime($run->created_at) }}</bdi> · {{ $ui::value($run->operation, 'maintenance_operations') }} · {{ $ui::value($run->status) }} · {{ $ui::maintenanceMode((bool) $run->dry_run) }} · <bdi dir="ltr" title="{{ $run->uuid }}">{{ $run->uuid }}</bdi></p>@empty<p>{{ $ui::text('empty_states.no_maintenance') }}</p>@endforelse @if ($maintenanceHistory instanceof \Illuminate\Contracts\Pagination\Paginator)<div class="qb-history-pages">{{ $maintenanceHistory->links() }}</div>@endif</div></details>
             </div>
-        </x-filament::section>
+        </section>
     </div>
 </x-filament-panels::page>

@@ -41,6 +41,10 @@ final class Restore extends Page
 
     public ?string $checkUuid = null;
 
+    public string $restoreScope = 'full';
+
+    public ?string $restoreSourceUuid = null;
+
     public static function getNavigationLabel(): string
     {
         return Ui::text('navigation.restore');
@@ -56,6 +60,26 @@ final class Restore extends Page
         return Ui::text('pages.restore.title');
     }
 
+    public function getSubheading(): string
+    {
+        return Ui::text('visual.restore_subtitle');
+    }
+
+    public function getPageClasses(): array
+    {
+        return ['qb-design', 'qb-restore'];
+    }
+
+    public function updatedRestoreScope(): void
+    {
+        $this->restoreSourceUuid = null;
+    }
+
+    public function checkSelectedBackup(): void
+    {
+        $this->submitCheck(['restore_profile' => $this->restoreScope, 'source_run_uuid' => $this->restoreSourceUuid]);
+    }
+
     public static function canAccess(): bool
     {
         return BackupPanelAccess::allows('view-recovery');
@@ -64,7 +88,7 @@ final class Restore extends Page
     protected function getHeaderActions(): array
     {
         return [
-            Action::make('start_restoration')->label(Ui::text('operator.start_restore'))
+            Action::make('start_restoration')->label(Ui::text('operator.start_restore'))->icon('heroicon-o-play')
                 ->visible(fn (): bool => BackupPanelAccess::allows('dry-restore') && $this->requestsAvailable())
                 ->schema([
                     Wizard::make([
@@ -255,6 +279,8 @@ final class Restore extends Page
             'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
             'operationsAvailable' => $operationsAvailable,
             'restoresAvailable' => $tables->has('restores'),
+            'sourceOptions' => $this->sourceOptions($this->restoreScope),
+            'canCheckBackup' => BackupPanelAccess::allows('dry-restore') && $this->requestsAvailable(),
         ];
     }
 

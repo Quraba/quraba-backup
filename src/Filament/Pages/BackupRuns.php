@@ -117,8 +117,8 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                         TextEntry::make('status')->label(Ui::text('labels.status'))->state(fn (BackupRun $record): string => Ui::value($record->status))->badge(),
                         TextEntry::make('consistency')->label(Ui::text('labels.consistency'))->state(fn (BackupRun $record): string => Ui::value($record->consistency, 'consistency')),
                         TextEntry::make('trigger')->label(Ui::text('labels.trigger'))->state(fn (BackupRun $record): string => Ui::value($record->trigger, 'triggers')),
-                        TextEntry::make('created')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => $record->requested_at?->toDateTimeString().' UTC'),
-                        TextEntry::make('completed')->label(Ui::text('labels.completed_at'))->state(fn (BackupRun $record): string => $record->completed_at?->toDateTimeString() ?? '—'),
+                        TextEntry::make('created')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at)),
+                        TextEntry::make('completed')->label(Ui::text('labels.completed_at'))->state(fn (BackupRun $record): string => Ui::dateTime($record->completed_at)),
                         TextEntry::make('complete_recovery_point')->label(Ui::text('pages.runs.complete'))->state(fn (BackupRun $record): string => Ui::text($this->complete($record) ? 'statuses.yes' : 'statuses.no')),
                     ]),
                     Section::make(Ui::text('pages.runs.technical'))->collapsible()->collapsed()->schema([
@@ -129,7 +129,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                         TextEntry::make('repository_id')->label(Ui::text('labels.repository_id'))->state(fn (BackupRun $record): string => $this->repositoryId($record)),
                         TextEntry::make('manifest')->label(Ui::text('labels.manifest'))->state(fn (BackupRun $record): string => Ui::value($record->artifacts->firstWhere('kind', ArtifactKind::RemoteManifest)?->status)),
                         TextEntry::make('failure')->label(Ui::text('labels.failure'))->state(fn (BackupRun $record): string => trim((string) $record->failure_stage.' '.(string) $record->failure_code)),
-                        TextEntry::make('retention')->label(Ui::text('labels.retention'))->state(fn (BackupRun $record): string => $record->isPinned() ? Ui::text('statuses.protected_until', ['time' => $record->pinned_until?->toDateTimeString()]) : Ui::text('statuses.not_pinned')),
+                        TextEntry::make('retention')->label(Ui::text('labels.retention'))->state(fn (BackupRun $record): string => $record->isPinned() ? Ui::text('statuses.protected_until', ['time' => Ui::dateTime($record->pinned_until)]) : Ui::text('statuses.not_pinned')),
                     ]),
                 ])->modalSubmitAction(false),
             ])

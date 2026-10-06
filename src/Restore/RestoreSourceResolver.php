@@ -67,7 +67,7 @@ final readonly class RestoreSourceResolver
             }
         }
 
-        $localSource = $local === null ? null : $this->fromLocal($local, $identity->appId, $identity->environment);
+        $localSource = $local === null ? null : $this->fromLocal($local, $identity->appId, $identity->environment, $remote !== null);
         $remoteSource = $remote === null ? null : $this->fromRemote($remote);
 
         if ($profile === RestoreProfile::Full && $remote !== null && ! $remote->recoveryPoint) {
@@ -98,10 +98,12 @@ final readonly class RestoreSourceResolver
         return $source;
     }
 
-    private function fromLocal(BackupRun $run, string $appId, string $environment): RestoreSource
+    private function fromLocal(BackupRun $run, string $appId, string $environment, bool $hasRemoteManifest): RestoreSource
     {
         $metadata = $run->metadata ?? [];
-        if (($metadata['app_id'] ?? null) !== $appId || ($metadata['environment'] ?? null) !== $environment) {
+        $identityMissing = ! array_key_exists('app_id', $metadata) && ! array_key_exists('environment', $metadata);
+        if (! ($identityMissing && $hasRemoteManifest)
+            && (($metadata['app_id'] ?? null) !== $appId || ($metadata['environment'] ?? null) !== $environment)) {
             throw RestoreFailed::sourceConflict('local run application/environment differs');
         }
 

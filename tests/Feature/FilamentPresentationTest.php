@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Quraba\Backup\Tests\Feature;
 
+use Carbon\CarbonImmutable;
 use Filament\Actions\ActionGroup;
 use Filament\Facades\Filament;
 use Filament\FilamentManager;
@@ -121,6 +122,21 @@ final class FilamentPresentationTest extends TestCase
 
         $this->app->setLocale('en');
         self::assertSame('Weekly on Sunday at 03:30', Ui::scheduleSetting(['enabled' => true, 'frequency' => 'weekly', 'day' => 0, 'time' => '03:30']));
+    }
+
+    public function test_recovery_point_detail_dates_and_maintenance_mode_are_localized(): void
+    {
+        $this->config()->set('app.timezone', 'Asia/Aden');
+        $time = CarbonImmutable::parse('2026-10-04 08:45:29', 'UTC');
+
+        $this->app->setLocale('ar');
+        self::assertSame('4 أكتوبر 2026 11:45', Ui::dateTime($time));
+        self::assertSame('للقراءة فقط', Ui::maintenanceMode(true));
+        self::assertSame('قابل للتنفيذ', Ui::maintenanceMode(false));
+
+        $this->app->setLocale('en');
+        self::assertSame('4 Oct 2026 11:45', Ui::dateTime($time));
+        self::assertSame('—', Ui::dateTime(null));
     }
 
     public function test_arabic_and_english_package_keys_have_matching_structure(): void

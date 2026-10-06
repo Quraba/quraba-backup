@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Artisan;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use Quraba\Backup\Archive\ArchiveStore;
+use Quraba\Backup\Backup\BackupManager;
+use Quraba\Backup\Backup\PendingBackupRequest;
 use Quraba\Backup\Enums\ArtifactStatus;
 use Quraba\Backup\Enums\BackupProfile;
 use Quraba\Backup\Enums\MaintenanceOperation;
@@ -156,6 +158,29 @@ final class PhaseSixSevenTest extends TestCase
         self::assertSame('restored-fixture.txt', basename($result['media_roots'][0]['workspace_subtree'].'/restored-fixture.txt'));
         self::assertNotEmpty(array_filter($this->invokedCommands(), static fn (string $command): bool => str_starts_with($command, 'restore '.$result['snapshot_id'])));
         self::assertFileExists($this->mediaRoot.'/uploads/a.jpg');
+    }
+
+    public function test_panel_recovery_point_is_restorable_and_legacy_missing_identity_requires_remote_manifest(): void
+    {
+        $this->config()->set('quraba-backup.filament.pending_enabled', true);
+        $requested = $this->app->make(PendingBackupRequest::class)->request(BackupProfile::Recovery);
+        $run = $this->app->make(BackupManager::class)->runPending($requested->uuid)->run->refresh();
+        $identity = $this->app->make(IdentityResolver::class)->current();
+
+        self::assertSame($identity->appId, $run->metadata['app_id']);
+        self::assertSame($identity->environment, $run->metadata['environment']);
+        self::assertTrue($this->restore($run->uuid, 'full')['ok']);
+
+        $metadata = $run->metadata;
+        unset($metadata['app_id'], $metadata['environment']);
+        $run->metadata = $metadata;
+        $run->save();
+        self::assertTrue($this->restore($run->uuid, 'full')['ok']);
+
+        $manifest = $run->artifacts()->where('kind', 'remote_manifest')->value('locator');
+        self::assertIsString($manifest);
+        unlink($this->bucketPath($manifest));
+        self::assertFalse($this->restore($run->uuid, 'full')['ok']);
     }
 
     public function test_full_restore_refuses_partial_source_and_force(): void

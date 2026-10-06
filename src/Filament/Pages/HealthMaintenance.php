@@ -16,7 +16,6 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\Component;
 use Filament\Schemas\Components\Section;
 use Filament\Tables;
-use Filament\Tables\Columns\IconColumn;
 use Filament\Tables\Columns\TextColumn;
 use Filament\Tables\Table;
 use Illuminate\Contracts\Auth\Authenticatable;
@@ -104,7 +103,8 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
                 TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupMaintenanceRun $record): string => match ($record->status->value) {
                     'completed' => 'success', 'failed', 'indeterminate' => 'danger', default => 'warning'
                 }),
-                IconColumn::make('dry_run')->label(Ui::text('labels.read_only'))->boolean(),
+                TextColumn::make('dry_run')->label(Ui::text('labels.read_only'))->badge()->color('gray')
+                    ->formatStateUsing(fn (bool $state): string => Ui::maintenanceMode($state)),
                 TextColumn::make('uuid')->label(Ui::text('labels.uuid'))->toggleable(isToggledHiddenByDefault: true),
             ])
             ->defaultPaginationPageOption(20);

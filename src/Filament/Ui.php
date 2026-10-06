@@ -5,10 +5,27 @@ declare(strict_types=1);
 namespace Quraba\Backup\Filament;
 
 use BackedEnum;
+use Carbon\CarbonInterface;
 use Quraba\Backup\Scheduling\ScheduleDefinition;
 
 final class Ui
 {
+    public static function dateTime(?CarbonInterface $time): string
+    {
+        if ($time === null) {
+            return '—';
+        }
+
+        $timezone = config('app.timezone', 'UTC');
+
+        return $time->copy()->setTimezone(is_string($timezone) ? $timezone : 'UTC')->locale(app()->getLocale())->translatedFormat('j M Y H:i');
+    }
+
+    public static function maintenanceMode(bool $readOnly): string
+    {
+        return self::text($readOnly ? 'statuses.read_only' : 'statuses.executable');
+    }
+
     /** @param array<string, bool|float|int|string|null> $replace */
     public static function text(string $key, array $replace = []): string
     {

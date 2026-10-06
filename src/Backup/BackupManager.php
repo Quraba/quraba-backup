@@ -105,6 +105,12 @@ final readonly class BackupManager
                 return new BackupRunResult($run->refresh(), BackupStatus::Failed, [], [], null);
             }
 
+            $run->mergeMetadata([
+                'package_version' => PackageVersion::current(),
+                'app_id' => $identity->appId,
+                'environment' => $identity->environment,
+            ]);
+
             return $this->execute($run, $identity);
         } finally {
             $locks->release();

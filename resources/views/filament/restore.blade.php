@@ -66,7 +66,7 @@
                     @php($sourceRun = $sourceRuns->get($journal['source_run_uuid'] ?? ''))
                     <div class="border-b border-gray-200 pb-4 last:border-0 last:pb-0 dark:border-gray-700">
                         <div class="flex flex-wrap items-center gap-2">
-                            <bdi>{{ $journal['updated_at'] ?? '—' }}</bdi>
+                            <bdi>{{ $ui::dateTimeValue($journal['updated_at'] ?? null) }}</bdi>
                             <span>{{ $ui::value($journal['profile'] ?? null, 'profiles') }}</span>
                             <x-filament::badge :color="($journal['unresolved'] ?? false) ? 'danger' : ($state === 'completed' ? 'success' : 'warning')">{{ \Quraba\Backup\Filament\OperatorStatus::restoreStage($journal) }}</x-filament::badge>
                         </div>
@@ -79,6 +79,7 @@
                                 <div>{{ $ui::text('operator.restore_record') }}: <bdi class="break-all font-mono" dir="ltr">{{ $journal['restore_uuid'] }}</bdi></div>
                                 <div>{{ $ui::text('operator.reference') }}: <bdi class="break-all font-mono" dir="ltr">{{ $journal['source_run_uuid'] }}</bdi></div>
                                 <div>{{ $ui::text('labels.journal_state') }}: {{ $ui::value($journal['phase'] ?? null, 'journal_phases') }}</div>
+                                <div><bdi dir="ltr">{{ $journal['updated_at'] ?? '—' }}</bdi></div>
                                 <div>{{ $ui::text('labels.boundary') }}: {{ $ui::value(empty($journal['destructive_started_at']) ? 'not_crossed' : 'crossed') }}</div>
                                 <div>{{ $ui::text('labels.safety_backup') }}: <bdi class="break-all font-mono" dir="ltr">{{ $journal['safety_backup_run_uuid'] ?? '—' }}</bdi></div>
                                 @foreach ($approvalHistory as $approval)@if (($approval['restore_uuid'] ?? null) === $journal['restore_uuid'])<div>{{ $ui::text('labels.request') }}: <bdi class="break-all font-mono" dir="ltr">{{ $approval['operation_uuid'] }}</bdi></div>@endif @endforeach
@@ -105,7 +106,6 @@
 
         <x-filament::section :heading="$ui::text('operator.advanced_recovery')" collapsible collapsed>
             <ol class="list-inside list-decimal space-y-1 text-sm">@foreach (__('quraba-backup::filament.pages.restore.after_steps') as $step)<li>{{ $step }}</li>@endforeach</ol>
-            @if ($restoresAvailable)<div class="mt-4">{{ $this->table }}</div>@endif
             <x-filament::section :heading="$ui::text('technical_detail')" collapsible collapsed>
                 <div class="space-y-2 text-sm">@foreach ($approvalHistory as $approval)
                     <p>{{ $ui::text('labels.request') }}: <bdi class="break-all font-mono" dir="ltr">{{ $approval['operation_uuid'] }}</bdi> · {{ $ui::text('labels.restore') }}: <bdi class="break-all font-mono" dir="ltr">{{ $approval['restore_uuid'] ?? '—' }}</bdi></p>

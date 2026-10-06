@@ -18,12 +18,12 @@
             @elseif (($health['state'] ?? null) !== 'healthy')
                 @php($issue = collect($health['checks'] ?? [])->first(fn ($check) => in_array($check['status'] ?? null, ['fail', 'warn'], true)))
                 @if ($issue)
-                    <p class="mt-3 text-sm">{{ $ui::checkLabel($issue['id'] ?? '', $issue['label'] ?? '') }}</p>
+                    <p class="mt-3 text-sm">{{ \Quraba\Backup\Filament\OperatorStatus::healthIssue($issue) }}</p>
                 @else
                     <p class="mt-3 text-sm">{{ $ui::text('operator.health_unknown') }}</p>
                 @endif
             @endif
-            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('operator.last_check') }}: <bdi>{{ $health['checked_at'] ?? $ui::text('empty_states.not_checked') }}</bdi></p>
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('operator.last_check') }}: <bdi>{{ isset($health['checked_at']) ? $ui::dateTimeValue($health['checked_at']) : $ui::text('empty_states.not_checked') }}</bdi></p>
         </x-filament::section>
 
         <x-filament::section :heading="$ui::text('navigation.runs')">

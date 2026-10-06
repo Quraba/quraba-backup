@@ -16,6 +16,7 @@
 
         @media (min-width: 48rem) {
             .qb-ui .grid.md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .qb-ui .grid.md\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
         }
 
         @media (min-width: 64rem) {

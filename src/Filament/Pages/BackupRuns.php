@@ -111,6 +111,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                     BackupProfile::Media->value => Ui::text('backup_choices.media_help'),
                 ])->default(BackupProfile::Recovery->value)->required()])
                 ->modalDescription(Ui::text('pages.runs.request_help'))
+                ->modalSubmitActionLabel(Ui::text('operator.create_backup'))
                 ->visible(fn (): bool => BackupPanelAccess::allows('run-backup') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled'))
                 ->action(fn (array $data) => $this->requestBackupChoice($data))])
             ->recordActions([
@@ -121,7 +122,7 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                         TextEntry::make('availability')->label(Ui::text('operator.restore_availability'))->state(fn (BackupRun $record): string => $this->availability($record) === 'unavailable' ? Ui::text('operator.unavailable') : Ui::value($this->availability($record), 'profiles')),
                         TextEntry::make('created')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at)),
                         TextEntry::make('completed')->label(Ui::text('labels.completed_at'))->state(fn (BackupRun $record): string => Ui::dateTime($record->completed_at)),
-                        TextEntry::make('warning')->label(Ui::text('labels.warning'))->state(fn (BackupRun $record): string => $record->consistency === ConsistencyLevel::BestEffort ? Ui::text('operator.best_effort') : ($record->failure_code ? OperatorStatus::failure($record->failure_code, $record->failure_message) : '—')),
+                        TextEntry::make('warning')->label(Ui::text('labels.warning'))->state(fn (BackupRun $record): string => $record->consistency === ConsistencyLevel::BestEffort ? Ui::text('operator.best_effort') : OperatorStatus::failure($record->failure_code, $record->failure_message))->visible(fn (BackupRun $record): bool => $record->consistency === ConsistencyLevel::BestEffort || $record->failure_code !== null),
                     ]),
                     Section::make(Ui::text('pages.runs.technical'))->collapsible()->collapsed()->schema([
                         TextEntry::make('uuid')->label(Ui::text('labels.uuid')),

@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace Quraba\Backup\Filament;
 
 use BackedEnum;
+use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Quraba\Backup\Scheduling\ScheduleDefinition;
+use Throwable;
 
 final class Ui
 {
@@ -19,6 +21,23 @@ final class Ui
         $timezone = config('app.timezone', 'UTC');
 
         return $time->copy()->setTimezone(is_string($timezone) ? $timezone : 'UTC')->locale(app()->getLocale())->translatedFormat('j M Y H:i');
+    }
+
+    public static function dateTimeValue(mixed $value): string
+    {
+        if ($value instanceof CarbonInterface) {
+            return self::dateTime($value);
+        }
+
+        if (! is_string($value) || $value === '') {
+            return '—';
+        }
+
+        try {
+            return self::dateTime(CarbonImmutable::parse($value));
+        } catch (Throwable) {
+            return '—';
+        }
     }
 
     public static function maintenanceMode(bool $readOnly): string

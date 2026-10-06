@@ -15,9 +15,6 @@ use Filament\Pages\Page;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\Wizard;
 use Filament\Schemas\Components\Wizard\Step;
-use Filament\Tables;
-use Filament\Tables\Columns\TextColumn;
-use Filament\Tables\Table;
 use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\Config\Repository;
 use Quraba\Backup\Enums\PendingOperationStatus;
@@ -29,7 +26,6 @@ use Quraba\Backup\Filament\RestoreSources;
 use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Models\PendingOperation;
-use Quraba\Backup\Models\RestoreRun;
 use Quraba\Backup\Operations\LiveApprovalStore;
 use Quraba\Backup\Operations\PanelTableAvailability;
 use Quraba\Backup\Operations\PendingOperationRequest;
@@ -37,10 +33,8 @@ use Quraba\Backup\Restore\Live\LiveRestoreAuthorization;
 use Quraba\Backup\Restore\Live\RestoreReconciler;
 use Throwable;
 
-final class Restore extends Page implements Tables\Contracts\HasTable
+final class Restore extends Page
 {
-    use Tables\Concerns\InteractsWithTable;
-
     protected string $view = 'quraba-backup::filament.restore';
 
     protected static ?int $navigationSort = 3;
@@ -220,19 +214,6 @@ final class Restore extends Page implements Tables\Contracts\HasTable
             && $check->finished_at !== null && ! $check->finished_at->lessThan(now('UTC')->subDay())
             && ($check->result['ok'] ?? false) === true && ($check->result['blockers'] ?? []) === []
             && $this->catalogAvailable() && app(RestoreSources::class)->contains($check->source_run_uuid, $check->restore_profile);
-    }
-
-    public function table(Table $table): Table
-    {
-        BackupPanelAccess::authorize('view-recovery');
-
-        return $table->query(RestoreRun::query()->latest('id'))->columns([
-            TextColumn::make('created_at')->label(Ui::text('labels.started'))->dateTime('j M Y g:i A')->sortable(),
-            TextColumn::make('profile')->label(Ui::text('operator.scope'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'profiles')),
-            TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state)),
-            TextColumn::make('source_run_uuid')->label(Ui::text('operator.reference'))->copyable()->toggleable(isToggledHiddenByDefault: true),
-            TextColumn::make('uuid')->label(Ui::text('operator.restore_record'))->copyable()->toggleable(isToggledHiddenByDefault: true),
-        ])->defaultPaginationPageOption(20);
     }
 
     /** @return array<string, mixed> */

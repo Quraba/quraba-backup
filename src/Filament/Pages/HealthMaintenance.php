@@ -22,6 +22,7 @@ use Illuminate\Contracts\Auth\Authenticatable;
 use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\OperatorStatus;
 use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupMaintenanceRun;
 use Quraba\Backup\Models\PendingOperation;
@@ -63,7 +64,7 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
     protected function getHeaderActions(): array
     {
         $checks = [];
-        foreach ([[PendingOperationType::HealthRefresh, 'actions.refresh_health'], [PendingOperationType::Doctor, 'actions.doctor'], [PendingOperationType::ResticCheck, 'actions.check_repository'], [PendingOperationType::RetentionPlan, 'actions.plan_retention']] as [$type, $label]) {
+        foreach ([[PendingOperationType::Doctor, 'actions.doctor'], [PendingOperationType::ResticCheck, 'actions.check_repository'], [PendingOperationType::RetentionPlan, 'actions.plan_retention']] as [$type, $label]) {
             $checks[] = Action::make($type->value)->label(Ui::text($label))
                 ->visible(fn (): bool => BackupPanelAccess::allows($type->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
                 ->requiresConfirmation()
@@ -87,7 +88,10 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             });
 
         return [
-            ActionGroup::make($checks)->label(Ui::text('pages.health.diagnostics'))->button(),
+            Action::make('check_now')->label(Ui::text('actions.refresh_health'))
+                ->visible(fn (): bool => BackupPanelAccess::allows(PendingOperationType::HealthRefresh->ability()) && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled') && app(PanelTableAvailability::class)->has('operations'))
+                ->action(fn () => $this->request(PendingOperationType::HealthRefresh)),
+            ActionGroup::make($checks)->label(Ui::text('pages.health.diagnostics'))->button()->color('gray'),
             ActionGroup::make($schedules)->label(Ui::text('actions.edit_schedules'))->button()->color('gray'),
         ];
     }
@@ -124,9 +128,11 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
                 $latest[$type->value] = $operationsAvailable ? PendingOperation::query()->where('type', $type->value)->latest('id')->first() : null;
             }
             $unresolved = $operationsAvailable ? PendingOperation::query()->whereIn('status', [PendingOperationStatus::Interrupted->value, PendingOperationStatus::Indeterminate->value])->latest('id')->limit(10)->get() : collect();
+            $waitingRequests = $operationsAvailable ? PendingOperation::query()->whereIn('status', [PendingOperationStatus::Pending->value, PendingOperationStatus::Claimed->value])->count() : 0;
         } catch (Throwable) {
             $latest = [];
             $unresolved = collect();
+            $waitingRequests = 0;
             $operationsAvailable = false;
         }
         try {
@@ -143,6 +149,7 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
             'scheduleError' => $scheduleError,
             'workerObserved' => app(WorkerHeartbeat::class)->observedAt(),
             'workerRecent' => app(WorkerHeartbeat::class)->recentlyObserved(),
+            'waitingRequests' => $waitingRequests,
             'pendingEnabled' => (bool) config('quraba-backup.filament.pending_enabled'),
             'operationsAvailable' => $operationsAvailable,
             'maintenanceAvailable' => $tables->has('maintenance'),
@@ -162,10 +169,10 @@ final class HealthMaintenance extends Page implements Tables\Contracts\HasTable
         try {
             $actor = Filament::auth()->user();
             abort_unless($actor instanceof Authenticatable, 403);
-            $operation = app(PendingOperationRequest::class)->submit($type, $actor);
-            Notification::make()->title(Ui::text('pages.health.check_requested'))->body(Ui::text('pages.health.check_queued', ['uuid' => $operation->uuid]))->success()->send();
+            app(PendingOperationRequest::class)->submit($type, $actor);
+            Notification::make()->title(Ui::text('pages.health.check_requested'))->body(Ui::text('pages.health.check_queued'))->success()->send();
         } catch (Throwable $exception) {
-            Notification::make()->title(Ui::text('pages.health.request_refused'))->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
+            Notification::make()->title(Ui::text('pages.health.request_refused'))->body(OperatorStatus::failure(null, $exception->getMessage()))->danger()->send();
         }
     }
 

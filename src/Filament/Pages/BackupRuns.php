@@ -6,6 +6,7 @@ namespace Quraba\Backup\Filament\Pages;
 
 use Filament\Actions\Action;
 use Filament\Forms\Components\DatePicker;
+use Filament\Forms\Components\Radio;
 use Filament\Forms\Components\TextInput;
 use Filament\Infolists\Components\TextEntry;
 use Filament\Notifications\Notification;
@@ -25,6 +26,7 @@ use Quraba\Backup\Enums\BackupStatus;
 use Quraba\Backup\Enums\BackupTrigger;
 use Quraba\Backup\Enums\ConsistencyLevel;
 use Quraba\Backup\Filament\BackupPanelAccess;
+use Quraba\Backup\Filament\OperatorStatus;
 use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Models\BackupRun;
 use Quraba\Backup\Operations\PanelTableAvailability;
@@ -76,19 +78,15 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
         return $table
             ->query(BackupRun::query()->with('artifacts')->latest('requested_at'))
             ->columns([
-                TextColumn::make('requested_at')->label(Ui::text('labels.created'))->dateTime('j M Y g:i A')->sortable(),
-                TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'profiles')),
-                TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state))->color(fn (BackupRun $record): string => match ($record->status) {
+                TextColumn::make('requested_at')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at))->sortable(),
+                TextColumn::make('profile')->label(Ui::text('labels.profile'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'backup_types')),
+                TextColumn::make('status')->label(Ui::text('labels.status'))->badge()->formatStateUsing(fn ($state, BackupRun $record): string => OperatorStatus::backupStage($record))->color(fn (BackupRun $record): string => match ($record->status) {
                     BackupStatus::Completed => 'success',
                     BackupStatus::Failed, BackupStatus::Indeterminate => 'danger',
                     BackupStatus::Partial => 'warning',
                     default => 'gray',
                 }),
-                TextColumn::make('consistency')->label(Ui::text('labels.consistency'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'consistency'))->toggleable(),
-                TextColumn::make('trigger')->label(Ui::text('labels.trigger'))->badge()->formatStateUsing(fn ($state): string => Ui::value($state, 'triggers'))->toggleable(isToggledHiddenByDefault: true),
-                TextColumn::make('archive')->label(Ui::text('labels.archive'))->badge()->state(fn (BackupRun $record): string => $this->componentStatus($record, ArtifactKind::ApplicationArchive))->color(fn (string $state): string => $this->componentColor($state))->formatStateUsing(fn (string $state): string => Ui::value($state)),
-                TextColumn::make('snapshot')->label(Ui::text('labels.snapshot'))->badge()->state(fn (BackupRun $record): string => $this->componentStatus($record, ArtifactKind::ResticSnapshot))->color(fn (string $state): string => $this->componentColor($state))->formatStateUsing(fn (string $state): string => Ui::value($state)),
-                TextColumn::make('complete')->label(Ui::text('labels.recovery_point'))->badge()->state(fn (BackupRun $record): string => $this->complete($record) ? 'completed' : 'incomplete')->color(fn (string $state): string => $state === 'completed' ? 'success' : 'gray')->formatStateUsing(fn (string $state): string => Ui::value($state)),
+                TextColumn::make('availability')->label(Ui::text('operator.restore_availability'))->badge()->state(fn (BackupRun $record): string => $this->availability($record))->formatStateUsing(fn (string $state): string => $state === 'unavailable' ? Ui::text('operator.unavailable') : Ui::value($state, 'profiles'))->color(fn (string $state): string => $state === 'unavailable' ? 'gray' : 'success'),
                 TextColumn::make('uuid')->label(Ui::text('labels.uuid'))->searchable(isIndividual: true)->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
@@ -102,33 +100,43 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
                 Filter::make('exact_uuid')->label(Ui::text('pages.runs.exact_uuid'))->schema([TextInput::make('uuid')->label(Ui::text('labels.uuid'))->uuid()])
                     ->query(fn (Builder $query, array $data): Builder => $query->when($data['uuid'] ?? null, fn (Builder $q, $uuid): Builder => $q->where('uuid', '=', $uuid))),
             ])
-            ->headerActions(array_map(fn (BackupProfile $profile): Action => Action::make('request_'.$profile->value)
-                ->label(match ($profile) {
-                    BackupProfile::Database => Ui::text('actions.database_backup'), BackupProfile::Media => Ui::text('actions.media_backup'), BackupProfile::Recovery => Ui::text('actions.recovery_backup')
-                })
-                ->requiresConfirmation()
+            ->headerActions([Action::make('create_backup')->label(Ui::text('operator.create_backup'))
+                ->schema([Radio::make('profile')->label(Ui::text('operator.backup_type'))->options([
+                    BackupProfile::Recovery->value => Ui::text('backup_choices.recovery'),
+                    BackupProfile::Database->value => Ui::text('backup_choices.database'),
+                    BackupProfile::Media->value => Ui::text('backup_choices.media'),
+                ])->descriptions([
+                    BackupProfile::Recovery->value => Ui::text('backup_choices.recovery_help'),
+                    BackupProfile::Database->value => Ui::text('backup_choices.database_help'),
+                    BackupProfile::Media->value => Ui::text('backup_choices.media_help'),
+                ])->default(BackupProfile::Recovery->value)->required()])
                 ->modalDescription(Ui::text('pages.runs.request_help'))
                 ->visible(fn (): bool => BackupPanelAccess::allows('run-backup') && (bool) config('quraba-backup.enabled') && (bool) config('quraba-backup.filament.pending_enabled'))
-                ->action(fn () => $this->requestBackup($profile)), BackupProfile::cases()))
+                ->action(fn (array $data) => $this->requestBackupChoice($data))])
             ->recordActions([
                 Action::make('details')->label(Ui::text('actions.details'))->schema([
                     Section::make(Ui::text('pages.runs.details'))->columns(2)->schema([
-                        TextEntry::make('profile')->label(Ui::text('labels.profile'))->state(fn (BackupRun $record): string => Ui::value($record->profile, 'profiles')),
-                        TextEntry::make('status')->label(Ui::text('labels.status'))->state(fn (BackupRun $record): string => Ui::value($record->status))->badge(),
-                        TextEntry::make('consistency')->label(Ui::text('labels.consistency'))->state(fn (BackupRun $record): string => Ui::value($record->consistency, 'consistency')),
-                        TextEntry::make('trigger')->label(Ui::text('labels.trigger'))->state(fn (BackupRun $record): string => Ui::value($record->trigger, 'triggers')),
+                        TextEntry::make('profile')->label(Ui::text('labels.profile'))->state(fn (BackupRun $record): string => Ui::value($record->profile, 'backup_types')),
+                        TextEntry::make('status')->label(Ui::text('labels.status'))->state(fn (BackupRun $record): string => OperatorStatus::backupStage($record))->badge(),
+                        TextEntry::make('availability')->label(Ui::text('operator.restore_availability'))->state(fn (BackupRun $record): string => $this->availability($record) === 'unavailable' ? Ui::text('operator.unavailable') : Ui::value($this->availability($record), 'profiles')),
                         TextEntry::make('created')->label(Ui::text('labels.created'))->state(fn (BackupRun $record): string => Ui::dateTime($record->requested_at)),
                         TextEntry::make('completed')->label(Ui::text('labels.completed_at'))->state(fn (BackupRun $record): string => Ui::dateTime($record->completed_at)),
-                        TextEntry::make('complete_recovery_point')->label(Ui::text('pages.runs.complete'))->state(fn (BackupRun $record): string => Ui::text($this->complete($record) ? 'statuses.yes' : 'statuses.no')),
+                        TextEntry::make('warning')->label(Ui::text('labels.warning'))->state(fn (BackupRun $record): string => $record->consistency === ConsistencyLevel::BestEffort ? Ui::text('operator.best_effort') : ($record->failure_code ? OperatorStatus::failure($record->failure_code, $record->failure_message) : '—')),
                     ]),
                     Section::make(Ui::text('pages.runs.technical'))->collapsible()->collapsed()->schema([
                         TextEntry::make('uuid')->label(Ui::text('labels.uuid')),
+                        TextEntry::make('archive_status')->label(Ui::text('labels.archive'))->state(fn (BackupRun $record): string => Ui::value($this->componentStatus($record, ArtifactKind::ApplicationArchive))),
+                        TextEntry::make('snapshot_status')->label(Ui::text('labels.snapshot'))->state(fn (BackupRun $record): string => Ui::value($this->componentStatus($record, ArtifactKind::ResticSnapshot))),
+                        TextEntry::make('consistency')->label(Ui::text('labels.consistency'))->state(fn (BackupRun $record): string => Ui::value($record->consistency, 'consistency')),
+                        TextEntry::make('trigger')->label(Ui::text('labels.trigger'))->state(fn (BackupRun $record): string => Ui::value($record->trigger, 'triggers')),
+                        TextEntry::make('archive_locator')->label(Ui::text('labels.archive'))->state(fn (BackupRun $record): string => (string) $record->artifacts->firstWhere('kind', ArtifactKind::ApplicationArchive)?->locator),
                         TextEntry::make('archive_sha256')->label(Ui::text('labels.archive_sha256'))->state(fn (BackupRun $record): string => (string) $record->artifacts->firstWhere('kind', ArtifactKind::ApplicationArchive)?->sha256),
                         TextEntry::make('archive_size')->label(Ui::text('labels.archive_size'))->state(fn (BackupRun $record): string => Ui::text('units.bytes', ['count' => $record->artifacts->firstWhere('kind', ArtifactKind::ApplicationArchive)?->byte_size])),
                         TextEntry::make('snapshot_id')->label(Ui::text('labels.snapshot_id'))->state(fn (BackupRun $record): string => (string) $record->artifacts->firstWhere('kind', ArtifactKind::ResticSnapshot)?->snapshot_id),
                         TextEntry::make('repository_id')->label(Ui::text('labels.repository_id'))->state(fn (BackupRun $record): string => $this->repositoryId($record)),
                         TextEntry::make('manifest')->label(Ui::text('labels.manifest'))->state(fn (BackupRun $record): string => Ui::value($record->artifacts->firstWhere('kind', ArtifactKind::RemoteManifest)?->status)),
                         TextEntry::make('failure')->label(Ui::text('labels.failure'))->state(fn (BackupRun $record): string => trim((string) $record->failure_stage.' '.(string) $record->failure_code)),
+                        TextEntry::make('failure_message')->label(Ui::text('operator.technical_failure'))->state(fn (BackupRun $record): string => app(SecretRedactor::class)->redact((string) $record->failure_message)),
                         TextEntry::make('retention')->label(Ui::text('labels.retention'))->state(fn (BackupRun $record): string => $record->isPinned() ? Ui::text('statuses.protected_until', ['time' => Ui::dateTime($record->pinned_until)]) : Ui::text('statuses.not_pinned')),
                     ]),
                 ])->modalSubmitAction(false),
@@ -147,10 +155,20 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
         return $this->verified($run, $kind) ? 'verified' : 'missing_failed';
     }
 
-    private function componentColor(string $status): string
+    private function availability(BackupRun $run): string
     {
-        return match ($status) {
-            'verified' => 'success', 'not_applicable' => 'gray', default => 'danger',
+        if ($run->status !== BackupStatus::Completed) {
+            return 'unavailable';
+        }
+
+        $database = $this->verified($run, ArtifactKind::ApplicationArchive);
+        $files = $this->verified($run, ArtifactKind::ResticSnapshot);
+
+        return match (true) {
+            $run->profile === BackupProfile::Recovery && $database && $files => 'full',
+            $database => 'database',
+            $files => 'media',
+            default => 'unavailable',
         };
     }
 
@@ -159,11 +177,17 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
         return $run->artifacts->contains(fn ($artifact): bool => $artifact->kind === $kind && $artifact->status === ArtifactStatus::Verified);
     }
 
-    private function complete(BackupRun $run): bool
+    /** @param array<array-key, mixed> $data */
+    private function requestBackupChoice(array $data): void
     {
-        return $run->profile === BackupProfile::Recovery && $run->status === BackupStatus::Completed
-            && $this->verified($run, ArtifactKind::ApplicationArchive)
-            && $this->verified($run, ArtifactKind::ResticSnapshot);
+        $profile = $data['profile'] ?? null;
+        if (! is_string($profile) || BackupProfile::tryFrom($profile) === null) {
+            Notification::make()->title(Ui::text('pages.runs.request_refused'))->danger()->send();
+
+            return;
+        }
+
+        $this->requestBackup(BackupProfile::from($profile));
     }
 
     private function repositoryId(BackupRun $run): string
@@ -178,8 +202,8 @@ final class BackupRuns extends Page implements Tables\Contracts\HasTable
     {
         BackupPanelAccess::authorize('run-backup');
         try {
-            $run = app(PendingBackupRequest::class)->request($profile);
-            Notification::make()->title(Ui::text('pages.runs.requested'))->body(Ui::text('pages.runs.request_pending', ['uuid' => $run->uuid]))->success()->send();
+            app(PendingBackupRequest::class)->request($profile);
+            Notification::make()->title(Ui::text('pages.runs.requested'))->body(Ui::text('pages.runs.request_pending'))->success()->send();
         } catch (Throwable $exception) {
             Notification::make()->title(Ui::text('pages.runs.request_refused'))->body(app(SecretRedactor::class)->redact($exception->getMessage()))->danger()->send();
         }

@@ -11,7 +11,6 @@ use Filament\FilamentManager;
 use Filament\Panel;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 use Illuminate\Auth\GenericUser;
-use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Schema;
 use Quraba\Backup\Enums\ArtifactKind;
 use Quraba\Backup\Enums\ArtifactStatus;
@@ -22,12 +21,15 @@ use Quraba\Backup\Enums\MaintenanceOperation;
 use Quraba\Backup\Enums\MaintenanceStatus;
 use Quraba\Backup\Enums\PendingOperationStatus;
 use Quraba\Backup\Enums\PendingOperationType;
+use Quraba\Backup\Enums\RestoreProfile;
 use Quraba\Backup\Enums\RestoreStatus;
+use Quraba\Backup\Filament\OperatorStatus;
 use Quraba\Backup\Filament\Pages\BackupDashboard;
 use Quraba\Backup\Filament\Pages\BackupOperations;
 use Quraba\Backup\Filament\Pages\BackupRuns;
 use Quraba\Backup\Filament\Pages\HealthMaintenance;
 use Quraba\Backup\Filament\Pages\Restore;
+use Quraba\Backup\Filament\RestoreSources;
 use Quraba\Backup\Filament\Ui;
 use Quraba\Backup\Filament\Widgets\BackupStats;
 use Quraba\Backup\Models\BackupArtifact;
@@ -162,19 +164,13 @@ final class FilamentPresentationTest extends TestCase
         }
     }
 
-    public function test_arabic_dashboard_renders_translated_sections_and_empty_states(): void
+    public function test_dashboard_exposes_concise_translated_operator_summary(): void
     {
         $this->app->setLocale('ar');
         $data = $this->viewData(new BackupDashboard);
-        $source = file_get_contents(__DIR__.'/../../resources/views/filament/dashboard.blade.php');
-        self::assertIsString($source);
-        $source = str_replace(['<x-filament-panels::page>', '</x-filament-panels::page>'], ['<div>', '</div>'], $source);
-        $source = preg_replace('/<x-filament::(?:section|badge)(?:\s[^>]*)?>/', '<div>', $source);
-        $source = preg_replace('/<\/x-filament::(?:section|badge)>/', '</div>', (string) $source);
-        $html = Blade::render((string) $source, $data);
-
-        self::assertStringContainsString('لا توجد مشكلات حديثة في النسخ', $html);
-        self::assertStringContainsString('لم يُفحص بعد', $html);
+        self::assertSame(['full', 'database', 'media'], array_keys($data['latestUsable']));
+        self::assertSame('أحدث نسخة موقع كاملة', Ui::text('operator.latest_full'));
+        self::assertSame('لم يُفحص بعد', Ui::text('empty_states.not_checked'));
     }
 
     public function test_dashboard_has_four_ordered_arabic_summary_cards(): void
@@ -188,43 +184,106 @@ final class FilamentPresentationTest extends TestCase
             self::assertInstanceOf(Stat::class, $stat);
             $labels[] = $stat->getLabel();
         }
-        self::assertSame(['آخر نسخة ناجحة', 'لقطة الوسائط', 'نسخ قاعدة البيانات', 'نقطة استعادة كاملة'], $labels);
+        self::assertSame(['آخر نسخة ناجحة', 'لقطة الوسائط', 'نسخة قاعدة البيانات', 'نسخة موقع كاملة'], $labels);
     }
 
-    public function test_health_actions_are_grouped_by_diagnostics_and_schedule(): void
+    public function test_health_has_one_primary_check_and_secondary_actions(): void
     {
         $groups = (new ReflectionMethod(new HealthMaintenance, 'getHeaderActions'))->invoke(new HealthMaintenance);
         self::assertIsArray($groups);
-        self::assertCount(2, $groups);
-        foreach ($groups as $group) {
-            self::assertInstanceOf(ActionGroup::class, $group);
-        }
-        self::assertCount(4, $groups[0]->getActions());
-        self::assertCount(2, $groups[1]->getActions());
+        self::assertCount(3, $groups);
+        self::assertSame('check_now', $groups[0]->getName());
+        self::assertInstanceOf(ActionGroup::class, $groups[1]);
+        self::assertInstanceOf(ActionGroup::class, $groups[2]);
+        self::assertCount(3, $groups[1]->getActions());
+        self::assertCount(2, $groups[2]->getActions());
     }
 
-    public function test_known_restore_sources_require_a_complete_recovery_run_and_both_verified_components(): void
+    public function test_restore_sources_are_scope_aware_and_keep_exact_uuid_values(): void
     {
-        $page = new Restore;
-        $eligible = new ReflectionMethod($page, 'eligibleSourceQuery');
-        $complete = new ReflectionMethod(new BackupRuns, 'complete');
-        $run = BackupRun::request(BackupProfile::Recovery, BackupTrigger::Manual);
-        BackupRun::query()->whereKey($run->id)->update(['status' => 'completed']);
-        $run->refresh();
-        $archive = BackupArtifact::createFor($run, ArtifactKind::ApplicationArchive);
-        BackupArtifact::query()->whereKey($archive->id)->update(['status' => 'verified']);
-        $run->load('artifacts');
-        self::assertFalse($complete->invoke(new BackupRuns, $run));
-        self::assertFalse($eligible->invoke($page)->where('uuid', $run->uuid)->exists());
-        $sourceFields = (new ReflectionMethod($page, 'sourceFields'))->invoke($page);
-        self::assertArrayNotHasKey($run->uuid, $sourceFields[0]->getOptions());
+        $database = $this->completedBackup(BackupProfile::Database, [ArtifactKind::ApplicationArchive]);
+        $media = $this->completedBackup(BackupProfile::Media, [ArtifactKind::ResticSnapshot]);
+        $partialFull = $this->completedBackup(BackupProfile::Recovery, [ArtifactKind::ApplicationArchive]);
+        $full = $this->completedBackup(BackupProfile::Recovery, [ArtifactKind::ApplicationArchive, ArtifactKind::ResticSnapshot]);
+        $sources = $this->app->make(RestoreSources::class);
 
-        $snapshot = BackupArtifact::createFor($run, ArtifactKind::ResticSnapshot);
-        BackupArtifact::query()->whereKey($snapshot->id)->update(['status' => 'verified']);
-        $run->load('artifacts');
-        self::assertTrue($complete->invoke(new BackupRuns, $run));
-        self::assertTrue($eligible->invoke($page)->where('uuid', $run->uuid)->exists());
-        self::assertArrayHasKey($run->uuid, $sourceFields[0]->getOptions());
+        self::assertTrue($sources->contains($database->uuid, RestoreProfile::Database));
+        self::assertTrue($sources->contains($partialFull->uuid, RestoreProfile::Database));
+        self::assertTrue($sources->contains($full->uuid, RestoreProfile::Database));
+        self::assertFalse($sources->contains($media->uuid, RestoreProfile::Database));
+        self::assertTrue($sources->contains($media->uuid, RestoreProfile::Media));
+        self::assertTrue($sources->contains($full->uuid, RestoreProfile::Media));
+        self::assertFalse($sources->contains($database->uuid, RestoreProfile::Media));
+        self::assertTrue($sources->contains($full->uuid, RestoreProfile::Full));
+        self::assertFalse($sources->contains($partialFull->uuid, RestoreProfile::Full));
+        self::assertFalse($sources->contains($database->uuid, RestoreProfile::Full));
+        self::assertFalse($sources->contains($media->uuid, RestoreProfile::Full));
+
+        $options = (new ReflectionMethod(new Restore, 'sourceOptions'))->invoke(new Restore, 'database', $database->uuid);
+        self::assertArrayHasKey($database->uuid, $options);
+        self::assertStringNotContainsString($database->uuid, $options[$database->uuid]);
+    }
+
+    public function test_restore_now_requires_a_recent_successful_check_without_blockers(): void
+    {
+        $this->config()->set('quraba-backup.filament.pending_enabled', true);
+        $source = $this->completedBackup(BackupProfile::Database, [ArtifactKind::ApplicationArchive]);
+        $page = new Restore;
+        $canRestore = new ReflectionMethod($page, 'canRestoreNow');
+        $check = PendingOperation::request(PendingOperationType::DryRestore, GenericUser::class, '1', $source->uuid, RestoreProfile::Database, 'check-1');
+        $page->checkUuid = $check->uuid;
+        self::assertFalse($canRestore->invoke($page));
+        $check->move(PendingOperationStatus::Pending, PendingOperationStatus::Claimed);
+        $check->move(PendingOperationStatus::Claimed, PendingOperationStatus::Running);
+        $check->finish(PendingOperationStatus::Completed, ['ok' => true, 'blockers' => ['unsafe']]);
+        self::assertFalse($canRestore->invoke($page));
+        $check->result = ['ok' => true, 'blockers' => []];
+        $check->finished_at = now('UTC')->subDays(2);
+        $check->save();
+        self::assertFalse($canRestore->invoke($page));
+        $check->finished_at = now('UTC');
+        $check->save();
+        self::assertTrue($canRestore->invoke($page));
+        PendingOperation::request(PendingOperationType::DryRestore, GenericUser::class, '1', $source->uuid, RestoreProfile::Database, 'check-2');
+        self::assertFalse($canRestore->invoke($page));
+    }
+
+    public function test_restore_journal_stages_and_findings_are_operator_language(): void
+    {
+        $this->app->setLocale('ar');
+        self::assertSame('جارٍ استعادة قاعدة البيانات', OperatorStatus::restoreStage(['phase' => 'db_import_starting']));
+        self::assertSame('جارٍ استعادة الملفات', OperatorStatus::restoreStage(['phase' => 'media_applying']));
+        self::assertSame('توقفت الاستعادة بأمان قبل استبدال أي بيانات حالية.', OperatorStatus::restoreStage(['phase' => 'validated', 'terminal' => 'failed', 'destructive_started_at' => null]));
+        self::assertSame(Ui::text('errors.app_key'), OperatorStatus::finding('The backup APP_KEY fingerprint differs from the current application.'));
+    }
+
+    public function test_guided_live_action_requires_both_operator_acknowledgements(): void
+    {
+        $this->config()->set('quraba-backup.filament.pending_enabled', true);
+        $this->config()->set('quraba-backup.filament.live_restore_enabled', true);
+        $this->config()->set('quraba-backup.filament.authorization.live-restore', static fn (): bool => true);
+        $source = $this->completedBackup(BackupProfile::Database, [ArtifactKind::ApplicationArchive]);
+        $check = PendingOperation::request(PendingOperationType::DryRestore, GenericUser::class, '1', $source->uuid, RestoreProfile::Database, 'guided-check');
+        $check->move(PendingOperationStatus::Pending, PendingOperationStatus::Claimed);
+        $check->move(PendingOperationStatus::Claimed, PendingOperationStatus::Running);
+        $check->finish(PendingOperationStatus::Completed, ['ok' => true, 'blockers' => []]);
+        $page = new Restore;
+        $page->checkUuid = $check->uuid;
+        (new ReflectionMethod($page, 'submitLive'))->invoke($page, ['acknowledge_replacement' => true, 'acknowledge_maintenance' => false, 'confirmation' => 'anything']);
+        self::assertSame(0, PendingOperation::query()->where('type', PendingOperationType::LiveRestore->value)->count());
+    }
+
+    /** @param list<ArtifactKind> $kinds */
+    private function completedBackup(BackupProfile $profile, array $kinds): BackupRun
+    {
+        $run = BackupRun::request($profile, BackupTrigger::Manual);
+        BackupRun::query()->whereKey($run->id)->update(['status' => BackupStatus::Completed->value]);
+        foreach ($kinds as $kind) {
+            $artifact = BackupArtifact::createFor($run, $kind);
+            BackupArtifact::query()->whereKey($artifact->id)->update(['status' => ArtifactStatus::Verified->value]);
+        }
+
+        return $run->refresh();
     }
 
     private function healthyRefresh(): void

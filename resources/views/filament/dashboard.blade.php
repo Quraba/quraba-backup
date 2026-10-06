@@ -1,47 +1,86 @@
 <x-filament-panels::page>
     @include('quraba-backup::filament.partials.styles')
     @php($ui = \Quraba\Backup\Filament\Ui::class)
-    <div class="qb-ui space-y-5">
+    <div class="qb-ui space-y-5" @if ($activeBackup || $activeOperation) wire:poll.20s @endif>
         @if (! $operationsAvailable || ! $catalogAvailable || ! $maintenanceAvailable)
             <x-filament::section :heading="$ui::text('sections.panel_history')">
                 <p class="text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('notices.migrations') }}</p>
             </x-filament::section>
         @endif
-        <x-filament::section :heading="$ui::text('pages.dashboard.health')" :description="$ui::text('pages.dashboard.health_help')">
-            <div class="flex flex-wrap items-center gap-3 text-sm">
+
+        <x-filament::section :heading="$ui::text('pages.dashboard.health')">
+            <div class="flex flex-wrap items-center gap-3">
                 <x-filament::badge :color="match ($health['state'] ?? 'unknown') { 'healthy' => 'success', 'degraded' => 'warning', 'failed' => 'danger', default => 'gray' }">{{ $ui::value($health['state'] ?? null) }}</x-filament::badge>
-                <span class="text-gray-600 dark:text-gray-400">{{ $ui::text('pages.dashboard.checked') }}: <bdi>{{ $health['checked_at'] ?? $ui::text('empty_states.not_checked') }}</bdi></span>
+                <span class="text-sm text-gray-600 dark:text-gray-400">{{ ($health['state'] ?? null) === 'healthy' ? $ui::text('operator.all_ready') : $ui::text('operator.attention') }}</span>
             </div>
             @if (($journals['unresolved'] ?? 0) > 0 || ($journals['unreadable'] ?? []) !== [])
                 <p class="mt-3 text-sm text-danger-600 dark:text-danger-400">{{ $ui::text('pages.dashboard.restore_attention', ['unresolved' => $journals['unresolved'] ?? 0, 'unreadable' => count($journals['unreadable'] ?? [])]) }}</p>
-            @endif
-            @foreach (($health['checks'] ?? []) as $check)
-                @if (in_array($check['status'] ?? '', ['warn', 'fail'], true))
-                    <div class="mt-2 text-sm"><div class="flex flex-wrap items-center gap-2"><x-filament::badge :color="($check['status'] ?? '') === 'fail' ? 'danger' : 'warning'">{{ $ui::value($check['status']) }}</x-filament::badge><span>{{ $ui::checkLabel($check['id'] ?? '', $check['label'] ?? '') }}</span></div><details class="mt-1"><summary class="cursor-pointer text-gray-500 dark:text-gray-400">{{ $ui::text('technical_detail') }}</summary><p class="mt-1">{{ $check['message'] }}</p></details></div>
+            @elseif (($health['state'] ?? null) !== 'healthy')
+                @php($issue = collect($health['checks'] ?? [])->first(fn ($check) => in_array($check['status'] ?? null, ['fail', 'warn'], true)))
+                @if ($issue)
+                    <p class="mt-3 text-sm">{{ $ui::checkLabel($issue['id'] ?? '', $issue['label'] ?? '') }}</p>
+                @else
+                    <p class="mt-3 text-sm">{{ $ui::text('operator.health_unknown') }}</p>
                 @endif
-            @endforeach
+            @endif
+            <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('operator.last_check') }}: <bdi>{{ $health['checked_at'] ?? $ui::text('empty_states.not_checked') }}</bdi></p>
         </x-filament::section>
+
+        <x-filament::section :heading="$ui::text('navigation.runs')">
+            <div class="grid gap-4 md:grid-cols-3">
+                @foreach (['full' => 'operator.latest_full', 'database' => 'operator.latest_database', 'media' => 'operator.latest_files'] as $kind => $label)
+                    @php($run = $latestUsable[$kind])
+                    <div class="min-w-0 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+                        <p class="text-sm text-gray-500 dark:text-gray-400">{{ $ui::text($label) }}</p>
+                        <p class="mt-2 font-medium">{{ $run ? $ui::dateTime($run->requested_at) : $ui::text('empty_states.no_backup') }}</p>
+                        @if ($run && $run->consistency->value === 'best_effort' && $kind === 'full')
+                            <p class="mt-2 text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('operator.best_effort') }}</p>
+                        @endif
+                    </div>
+                @endforeach
+            </div>
+        </x-filament::section>
+
         <div class="grid gap-5 lg:grid-cols-2">
-            <x-filament::section :heading="$ui::text('pages.dashboard.application')">
-                <dl class="grid gap-3 text-sm sm:grid-cols-2">
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.environment') }}</dt><dd class="font-medium"><bdi>{{ $environment }}</bdi></dd></div>
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.backups') }}</dt><dd><x-filament::badge :color="$backupEnabled ? 'success' : 'gray'">{{ $ui::value($backupEnabled ? 'enabled' : 'disabled') }}</x-filament::badge></dd></div>
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.secrets') }}</dt><dd><x-filament::badge :color="$secretsAcknowledged ? 'success' : 'warning'">{{ $ui::value($secretsAcknowledged ? 'acknowledged' : 'not_acknowledged') }}</x-filament::badge></dd></div>
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.worker') }}</dt><dd><x-filament::badge :color="! $pendingEnabled ? 'gray' : ($workerRecent ? 'success' : 'warning')">{{ $ui::value(! $pendingEnabled ? 'disabled' : ($workerRecent ? 'recently_observed' : 'not_recently_observed')) }}</x-filament::badge>@if ($pendingEnabled)<p class="mt-1 text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.last_seen') }}: <bdi>{{ $workerObserved ?? $ui::text('empty_states.never_run') }}</bdi></p>@endif</dd></div>
-                </dl>
+            <x-filament::section :heading="$ui::text('operator.current_activity')">
+                @if ($activeBackup)
+                    <div class="flex flex-wrap items-center gap-2 text-sm">
+                        <span>{{ $ui::value($activeBackup->profile, 'backup_types') }}</span>
+                        <x-filament::badge color="warning">{{ \Quraba\Backup\Filament\OperatorStatus::backupStage($activeBackup) }}</x-filament::badge>
+                    </div>
+                @elseif ($activeOperation)
+                    <div class="flex flex-wrap items-center gap-2 text-sm">
+                        <span>{{ $ui::value($activeOperation->type, 'operations') }}</span>
+                        <x-filament::badge color="warning">{{ \Quraba\Backup\Filament\OperatorStatus::operationStage($activeOperation) }}</x-filament::badge>
+                    </div>
+                @else
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('operator.no_activity') }}</p>
+                @endif
             </x-filament::section>
-            <x-filament::section :heading="$ui::text('pages.dashboard.repository')">
-                <dl class="space-y-3 text-sm">
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.repository_message') }}</dt><dd>@if ($repository)<x-filament::badge :color="match ($repository['status'] ?? null) { 'pass' => 'success', 'warn' => 'warning', 'fail' => 'danger', default => 'gray' }">{{ $ui::value($repository['status'] ?? null) }}</x-filament::badge><details class="mt-1"><summary class="cursor-pointer text-gray-500 dark:text-gray-400">{{ $ui::text('technical_detail') }}</summary><p class="mt-1">{{ $repository['message'] ?? '' }}</p></details>@else{{ $ui::text('empty_states.no_health') }}@endif</dd></div>
-                    <div><dt class="text-gray-500 dark:text-gray-400">{{ $ui::text('pages.dashboard.integrity_checked') }}</dt><dd><bdi>{{ $resticCheck?->finished_at?->setTimezone(config('app.timezone', 'UTC'))->translatedFormat('j M Y H:i') ?? $ui::text('empty_states.no_integrity') }}</bdi></dd></div>
-                </dl>
-            </x-filament::section>
-            <x-filament::section :heading="$ui::text('pages.dashboard.problems')">
-                <div class="space-y-2 text-sm">@forelse ($warnings as $run)<div class="flex flex-wrap items-center gap-2"><bdi>{{ $run->requested_at?->setTimezone(config('app.timezone', 'UTC'))->translatedFormat('j M Y H:i') }}</bdi><span>{{ $ui::value($run->profile, 'profiles') }}</span><x-filament::badge :color="in_array($run->status->value, ['failed', 'indeterminate'], true) ? 'danger' : 'warning'">{{ $ui::value($run->status) }}</x-filament::badge></div>@empty<p class="text-success-600 dark:text-success-400">{{ $ui::text('empty_states.no_problems') }}</p>@endforelse</div>
-            </x-filament::section>
-            <x-filament::section :heading="$ui::text('pages.dashboard.schedules')" :description="$ui::text('pages.dashboard.schedules_help')">
-                <div class="space-y-2 text-sm">@if ($scheduleError)<p class="text-danger-600 dark:text-danger-400">{{ $scheduleError }}</p>@endif @forelse ($schedules as $schedule)<div class="flex flex-wrap items-center justify-between gap-2"><span class="font-medium">{{ $ui::value($schedule->task, 'schedule_tasks') }}</span><bdi>{{ $ui::schedule($schedule) }}</bdi></div>@empty<p class="text-gray-500 dark:text-gray-400">{{ $ui::text('empty_states.no_schedules') }}</p>@endforelse</div>
+            <x-filament::section :heading="$ui::text('operator.next_backup')">
+                @if ($nextBackup)
+                    <p class="font-medium">{{ $ui::value($nextBackup['profile'], 'backup_types') }}</p>
+                    <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">{{ $ui::dateTime($nextBackup['at']) }}</p>
+                @else
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ $ui::text('empty_states.no_schedules') }}</p>
+                @endif
             </x-filament::section>
         </div>
+
+        <x-filament::section :heading="$ui::text('technical_detail')" collapsible collapsed>
+            <dl class="grid gap-3 text-sm sm:grid-cols-2">
+                <div><dt>{{ $ui::text('pages.dashboard.environment') }}</dt><dd><bdi dir="ltr">{{ $environment }}</bdi></dd></div>
+                <div><dt>{{ $ui::text('operator.background') }}</dt><dd>{{ $ui::value(! $pendingEnabled ? 'disabled' : ($workerRecent ? 'recently_observed' : 'not_recently_observed')) }}</dd></div>
+                <div><dt>{{ $ui::text('operator.storage') }}</dt><dd>{{ $repository ? $ui::value($repository['status'] ?? null) : $ui::text('empty_states.no_health') }}</dd></div>
+                <div><dt>{{ $ui::text('pages.dashboard.integrity_checked') }}</dt><dd>{{ $ui::dateTime($resticCheck?->finished_at) }}</dd></div>
+            </dl>
+            @if ($pendingEnabled && ! $workerRecent)
+                <p class="mt-3 text-sm text-warning-600 dark:text-warning-400">{{ $ui::text('operator.background_stale') }}</p>
+            @endif
+            @foreach ($warnings as $run)
+                <p class="mt-2 text-sm">{{ $ui::dateTime($run->requested_at) }} · {{ $ui::value($run->profile, 'backup_types') }} · {{ $ui::value($run->status) }}</p>
+            @endforeach
+            @if ($scheduleError)<p class="mt-2 text-sm text-danger-600 dark:text-danger-400">{{ $scheduleError }}</p>@endif
+        </x-filament::section>
     </div>
 </x-filament-panels::page>
